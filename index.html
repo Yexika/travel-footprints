@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>我的世界足迹</title>
+<meta name="description" content="一张可以自己标记的旅行足迹地图：在世界、中国、省三级地图上标出去过和想去的国家、省份、城市和景点。">
+<meta property="og:title" content="我的世界足迹 · 旅行足迹地图">
+<meta property="og:description" content="在世界、中国、省三级地图上标出去过和想去的国家、省份、城市和景点。">
+<meta property="og:type" content="website">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;800&family=Noto+Sans+SC:wght@400;500;700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="wrap band top">
+  <div class="ttl">
+    <h1>我的世界足迹</h1>
+    <p>去过的地方涂上朱红，想去的地方先用蓝色斜纹占个位。点中国进入省份，点省份看城市和景点。</p>
+  </div>
+  <div class="stats" id="stats"></div>
+</header>
+
+<main>
+<section class="wrap">
+  <div class="nav">
+    <nav class="crumbs" id="crumbs" aria-label="当前位置"></nav>
+    <div class="ph" id="ph" hidden></div>
+  </div>
+  <div class="tools">
+    <div class="modes" role="group" aria-label="操作方式">
+      <button data-m="view" aria-pressed="true"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 1.5l10 6-4.3 1.1 2.6 5-2 1-2.6-5L3 12.6z" fill="currentColor"/></svg>查看</button>
+      <button data-m="been" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2" width="12" height="12" rx="3" style="fill:var(--been)"/></svg>涂·去过</button>
+      <button data-m="want" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" rx="3" style="fill:var(--wantbg);stroke:var(--want)"/><path d="M4 9.5l5.5-5.5M5.5 12.5l7-7" style="stroke:var(--want);stroke-width:1.8"/></svg>涂·想去</button>
+      <button data-m="pin" aria-pressed="false"><svg viewBox="-9 -23 18 24" aria-hidden="true"><path d="M0 0C-1.5-4.5-8-8.2-8-13.5a8 8 0 1 1 16 0C8-8.2 1.5-4.5 0 0Z" fill="currentColor"/></svg>放地点</button>
+    </div>
+    <div class="search">
+      <input id="q" type="search" placeholder="搜国家、省、城市或景点，如 九寨沟" autocomplete="off" aria-label="搜索">
+      <ul id="sug" role="listbox" hidden></ul>
+    </div>
+  </div>
+  <p class="hint" id="hint"></p>
+  <div class="fig" id="fig">
+    <svg id="map" role="img" aria-label="可标记的地图">
+      <defs>
+        <pattern id="hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <rect class="hb" width="7" height="7"/><rect class="hl" width="2.6" height="7"/>
+        </pattern>
+        <clipPath id="insclip"><rect id="insrect"/></clipPath>
+      </defs>
+    </svg>
+    <div class="legend" aria-hidden="true">
+      <span><i class="sw been"></i>去过</span>
+      <span><i class="sw want"></i>想去</span>
+      <span class="lg-spot"><i class="sw spot"></i>景点</span>
+      <span><svg class="sw pin" viewBox="-9 -23 18 24"><path d="M0 0C-1.5-4.5-8-8.2-8-13.5a8 8 0 1 1 16 0C8-8.2 1.5-4.5 0 0Z" style="fill:var(--ink)"/></svg>地点</span>
+    </div>
+    <div class="zoom">
+      <button id="zin" aria-label="放大">+</button>
+      <button id="zout" aria-label="缩小">−</button>
+      <button id="zre" aria-label="复位地图">复位</button>
+    </div>
+    <div class="tip" id="tip" hidden></div>
+    <div class="card" id="card" role="dialog" aria-label="标记详情" hidden></div>
+    <div class="loading" id="loading">正在铺开地图…</div>
+  </div>
+</section>
+
+<section class="wrap band" id="lists"></section>
+</main>
+
+<footer class="wrap band foot">
+  <div class="syncbox">
+    <p class="sync" id="sync" data-s="init">正在读取足迹…</p>
+    <button class="btn" id="ghBtn" hidden>连接 GitHub</button>
+    <p class="about" id="about" hidden></p>
+  </div>
+  <details class="bk">
+    <summary>备份与恢复</summary>
+    <p>把全部标记复制成一段文字存起来；需要时粘贴回来导入，会和现有标记合并。</p>
+    <div class="row"><button class="btn" id="bCopy">复制备份</button><button class="btn danger edit" id="bClear">清空所有标记</button></div>
+    <textarea id="bTxt" class="edit" rows="3" placeholder="把备份文字粘贴到这里"></textarea>
+    <div class="row edit"><button class="btn" id="bImp">导入备份</button></div>
+  </details>
+</footer>
+
+<div class="modal" id="ghDlg" hidden>
+  <div class="mbox" role="dialog" aria-modal="true" aria-labelledby="ghT">
+    <h2 id="ghT">把足迹保存到 GitHub 仓库</h2>
+    <p>连接后，每次标记都会自动写进仓库里的 <code>footprints.json</code>，换设备打开也同步，别人打开网址能看到你的足迹（只读）。</p>
+    <label class="fl">仓库（用户名/仓库名）<input id="ghRepo" placeholder="例如 xiaoming/travel-map" autocomplete="off"></label>
+    <label class="fl">分支<input id="ghBranch" value="main" autocomplete="off"></label>
+    <label class="fl">访问令牌（token）<input id="ghToken" type="password" placeholder="github_pat_…" autocomplete="off"></label>
+    <details class="how"><summary>怎么拿到令牌？</summary>
+      <ol>
+        <li>打开 GitHub → 右上角头像 → Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token。</li>
+        <li>Repository access 选 Only select repositories，只勾这个地图仓库。</li>
+        <li>Permissions → Repository permissions → Contents 选 Read and write，其他不用动。</li>
+        <li>生成后复制以 github_pat_ 开头的令牌，粘贴到上面。</li>
+      </ol>
+      <p>令牌只保存在这台设备的浏览器里，不会上传到别处。公用电脑上不要连接。</p>
+    </details>
+    <p class="err" id="ghErr" hidden></p>
+    <div class="row">
+      <button class="btn pri" id="ghOk">连接</button>
+      <button class="btn" id="ghOff" hidden>断开这台设备</button>
+      <button class="btn" id="ghCancel">取消</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" hidden><span></span><button>撤销</button></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/dist/topojson-client.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
