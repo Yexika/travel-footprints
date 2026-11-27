@@ -285,7 +285,7 @@ function layout(force){
     TE=[[Math.min(0,b[0][0]-40),Math.min(0,b[0][1]-40)],[Math.max(W,b[1][0]+40),Math.max(h,b[1][1]+40)]];
   }
   H=h;fig.style.height=H+'px';svg.attr('width',W).attr('height',H);
-  zoom.extent([[0,0],[W,H]]).translateExtent(TE).scaleExtent([minK,view==='world'?16:24]);
+  zoom.extent([[0,0],[W,H]]).translateExtent(TE).scaleExtent([minK,view==='world'?16:view==='prov'?64:24]);
   gBg.selectAll('*').remove();
   if(view==='world'){gBg.append('path').attr('class','sea').attr('d',path(sphere));gBg.append('path').attr('class','grat').attr('d',path(grat));}
   gC.selectAll('path').attr('d',path);
@@ -312,10 +312,10 @@ function drawInset(){
 function buildLabels(){
   LBL=[];
   if(view!=='world'){
-    for(const f of curFeats){if(!f.cen||!isFinite(f.cen[0]))continue;LBL.push({id:'a'+f.key,key:f.key,x:f.cen[0],y:f.cen[1]+4,t:f.name,cls:'a',pri:f.a,w:f.name.length*13+6,h:16});}
-    if(view==='prov')for(const s of SPOTS){if(s.p!==prov)continue;const p=proj([s.lon,s.lat]);if(!p)continue;LBL.push({id:s.id,x:p[0],y:p[1]+4,dx:14,t:s.n,cls:'s',pri:s.g?2e12:1e12,w:s.n.length*13+6,h:16,st:true});}
+    for(const f of curFeats){if(!f.cen||!isFinite(f.cen[0]))continue;LBL.push({id:'a'+f.key,key:f.key,x:f.cen[0],y:f.cen[1],t:f.name,cls:'a',pri:f.a,w:f.name.length*13+6,h:16});}
+    if(view==='prov')for(const s of SPOTS){if(s.p!==prov)continue;const p=proj([s.lon,s.lat]);if(!p)continue;LBL.push({id:s.id,x:p[0],y:p[1],dx:14,t:s.n,cls:'s',pri:s.g?2e12:1e12,w:s.n.length*13+6,h:16,st:true});}
   }
-  gLbl.selectAll('text').data(LBL,d=>d.id).join('text').attr('class',d=>'lbl '+d.cls).attr('x',d=>d.dx||0).text(d=>d.t);
+  gLbl.selectAll('text').data(LBL,d=>d.id).join('text').attr('class',d=>'lbl '+d.cls).attr('x',d=>d.dx||0).attr('y',4).text(d=>d.t);
 }
 function placeLabels(){
   if(!LBL.length)return;
@@ -324,7 +324,7 @@ function placeLabels(){
   for(const d of FLAGS){const q=T.apply(d._p);placed.push([q[0]-3,q[1]-22,q[0]+15,q[1]+2]);}
   for(const d of LBL.slice().sort((a,b)=>b.pri-a.pri)){
     const q=T.apply([d.x,d.y]);
-    const x0=d.st?q[0]+(d.dx||0):q[0]-d.w/2,y0=q[1]-d.h+3,box=[x0,y0,x0+d.w,y0+d.h];
+    const x0=d.st?q[0]+(d.dx||0):q[0]-d.w/2,y0=q[1]+7-d.h,box=[x0,y0,x0+d.w,y0+d.h];
     if(box[2]<0||box[0]>W||box[3]<0||box[1]>H)continue;
     if(!d.st){const f=AREA[d.key];if(f&&f.a*K*K<d.w*d.h*0.7)continue;}
     if(placed.some(b=>b[0]<box[2]&&box[0]<b[2]&&b[1]<box[3]&&box[1]<b[3]))continue;
@@ -402,7 +402,9 @@ function focusPoint(lon,lat,s,minK){
   const t=C(d3.zoomIdentity.translate(W/2,H/2).scale(Math.max(K,minK)).translate(-p[0],-p[1]));go(t);
   sel=s;renderMap();showCard(t.apply(p));scrollToMap();
 }
-const focusSpot=id=>{const s=SPOT[id];if(s)focusPoint(s.lon,s.lat,{t:'s',id},view==='prov'?2:6);};
+// 定位景点时放大到约 0.4 经度宽（城区街道尺度），市区里挨得很近的景点也能分开
+function cityK(lon,lat){const a=proj([lon,lat]),b=proj([lon+0.1,lat]);if(!a||!b)return 6;const px=Math.hypot(b[0]-a[0],b[1]-a[1])||1;return Math.max(2,Math.min(48,W/(px*4)));}
+const focusSpot=id=>{const s=SPOT[id];if(s)focusPoint(s.lon,s.lat,{t:'s',id},view==='prov'?cityK(s.lon,s.lat):6);};
 const focusPin=id=>{const d=pins[id];if(d)focusPoint(d.lon,d.lat,{t:'p',id},view==='world'?4:2);};
 function scrollToMap(){const r=fig.getBoundingClientRect();if(r.top<0||r.bottom>innerHeight)fig.scrollIntoView({block:'nearest',behavior:reduce?'auto':'smooth'});}
 
