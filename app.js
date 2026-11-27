@@ -313,7 +313,7 @@ function buildLabels(){
   LBL=[];
   if(view!=='world'){
     for(const f of curFeats){if(!f.cen||!isFinite(f.cen[0]))continue;LBL.push({id:'a'+f.key,key:f.key,x:f.cen[0],y:f.cen[1]+4,t:f.name,cls:'a',pri:f.a,w:f.name.length*13+6,h:16});}
-    if(view==='prov')for(const s of SPOTS){if(s.p!==prov)continue;const p=proj([s.lon,s.lat]);if(!p)continue;LBL.push({id:s.id,x:p[0],y:p[1]+4,dx:14,t:s.n,cls:'s',pri:1e12,w:s.n.length*13+6,h:16,st:true});}
+    if(view==='prov')for(const s of SPOTS){if(s.p!==prov)continue;const p=proj([s.lon,s.lat]);if(!p)continue;LBL.push({id:s.id,x:p[0],y:p[1]+4,dx:14,t:s.n,cls:'s',pri:s.g?2e12:1e12,w:s.n.length*13+6,h:16,st:true});}
   }
   gLbl.selectAll('text').data(LBL,d=>d.id).join('text').attr('class',d=>'lbl '+d.cls).attr('x',d=>d.dx||0).text(d=>d.t);
 }
@@ -475,7 +475,7 @@ function selKey(){return sel?(sel.t==='a'?sel.k:sel.t==='s'?sel.id:null):null;}
 function cardHTML(){
   if(!sel)return '';
   if(sel.t==='a'){const f=AREA[sel.k];return f?markCard(sel.k,f.name,f.sub):'';}
-  if(sel.t==='s'){const s=SPOT[sel.id];return s?markCard(s.id,s.n,`景点 · ${short(NAMES[s.c]||'')} · ${short(NAMES[s.p]||'')}`):'';}
+  if(sel.t==='s'){const s=SPOT[sel.id];return s?markCard(s.id,s.n,`${gradeText(s)} · ${short(NAMES[s.c]||'')} · ${short(NAMES[s.p]||'')}`):'';}
   if(sel.t==='p'){
     const d=pins[sel.id];if(!d)return '';
     return head(d.name,'自己放的地点 · '+fmtLL(d))+(ro?roBody(d):`<label class="fl">名字<input data-f="name" value="${esc(d.name)}" maxlength="60"></label>`+seg([['been','去过'],['want','想去']],d.s)+fields(d)+'<button class="del" data-act="del">删除这个地点</button>');
@@ -604,18 +604,27 @@ function chinaLists(){
     return col(s,h,`${fs.length} 个省级行政区`);
   }).join('')+'</div>';
 }
+// 5A 标识：g 为 '5A'（国家5A级旅游景区）或 '拟5A'（2026年11月公示中）
+const gradeText=s=>s.g==='5A'?'国家5A级景区':s.g==='拟5A'?'拟评5A景区（2026年11月公示）':'景点';
+const badge=s=>s.g?`<em class="g5${s.g==='5A'?'':' p'}" title="${s.g==='5A'?'国家5A级旅游景区':'拟评5A（2026年11月公示）'}">${s.g}</em>`:'';
+let spotFilter='all';
 function provLists(){
   const pn=NAMES[prov]||'';
   const ps=SPOTS.filter(s=>s.p===prov);
-  const groups=new Map();for(const s of ps){if(!groups.has(s.c))groups.set(s.c,[]);groups.get(s.c).push(s);}
+  const n5=ps.filter(s=>s.g).length;
+  const shown=ps.filter(s=>spotFilter==='5a'?s.g:spotFilter==='todo'?!(marks[s.id]&&marks[s.id].s==='been'):true);
+  const groups=new Map();for(const s of shown){if(!groups.has(s.c))groups.set(s.c,[]);groups.get(s.c).push(s);}
   const gs=[...groups.entries()].sort((a,b)=>a[0].localeCompare(b[0]));
-  let h=`<div class="sec"><h2><span>景点打卡</span><span>${esc(short(pn))}收录了 ${ps.length} 个知名景点</span></h2><p>没收录的地方，可以用「放地点」在地图上自己加。</p><div class="grid">`;
+  const fb=(v,l)=>`<button data-sf="${v}" aria-pressed="${spotFilter===v}">${l}</button>`;
+  let h=`<div class="sec"><h2><span>景点打卡</span><span>${esc(short(pn))}收录了 ${ps.length} 个景点${n5?`，其中 ${n5} 个是 5A 景区`:''}</span></h2><p>没收录的地方，可以用「放地点」在地图上自己加。</p><div class="sf" role="group" aria-label="筛选景点">${fb('all','全部')}${fb('5a','只看 5A')}${fb('todo','没去过的')}</div>`;
+  if(!shown.length)h+=`<p class="empty">${spotFilter==='todo'?'这个省收录的景点都去过了，厉害！':'没有符合条件的景点。'}</p>`;
+  h+='<div class="grid">';
   for(const [c,list] of gs){
     const nb=list.filter(s=>marks[s.id]&&marks[s.id].s==='been').length;
     h+=`<div class="grp"><h3><span>${esc(c===prov?short(pn):short(NAMES[c]||''))}</span><small>${nb}/${list.length}</small></h3><ul class="spl">`;
     for(const s of list){
       const st=marks[s.id]?marks[s.id].s:'';
-      h+=`<li data-id="${esc(s.id)}"><button class="nm" data-spot="${esc(s.id)}"><i class="${st}"></i>${esc(s.n)}</button><span class="tg edit"><button data-ss="been" aria-pressed="${st==='been'}">去过</button><button data-ss="want" aria-pressed="${st==='want'}">想去</button></span></li>`;
+      h+=`<li data-id="${esc(s.id)}"><button class="nm" data-spot="${esc(s.id)}"><i class="${st}"></i><span>${esc(s.n)}</span>${badge(s)}</button><span class="tg edit"><button data-ss="been" aria-pressed="${st==='been'}">去过</button><button data-ss="want" aria-pressed="${st==='want'}">想去</button></span></li>`;
     }
     h+='</ul></div>';
   }
@@ -637,6 +646,8 @@ function renderLists(){
   L.innerHTML=view==='world'?worldLists():view==='china'?chinaLists():provLists();
 }
 $('#lists').addEventListener('click',e=>{
+  const sf=e.target.closest('button[data-sf]');
+  if(sf){spotFilter=sf.dataset.sf;renderLists();const nb=document.querySelector(`#lists button[data-sf="${spotFilter}"]`);if(nb)nb.focus({preventScroll:true});return;}
   const tg=e.target.closest('button[data-ss]');
   if(tg){
     const id=tg.closest('li').dataset.id,s=tg.dataset.ss;if(!ready()||!SPOT[id])return;
@@ -672,6 +683,7 @@ async function route(){
   }catch(e){ld.hidden=false;ld.textContent='这个省的地图没有加载出来，请刷新页面再试。';return;}
   if(id!==routeId)return;
   ld.hidden=true;
+  if(p!==prov)spotFilter='all';
   view=v;prov=p;curFeats=feats;AREA={};for(const f of feats)AREA[f.key]=f;
   sel=null;cardEl.hidden=true;tip.hidden=true;
   document.body.classList.remove('v-world','v-china','v-prov');document.body.classList.add('v-'+v);
@@ -705,7 +717,7 @@ function buildIndex(){
     if(a.endsWith('0000'))IDX.push({ty:'省',n,k:a,sub:'中国'});
     else IDX.push({ty:/[区县]$/.test(n)?'区县':'市',n,k:a,sub:short(NAMES[a.slice(0,2)+'0000'])});
   }
-  for(const s of SPOTS)IDX.push({ty:'景点',n:s.n,k:s.id,sub:short(NAMES[s.c]||'')+' · '+short(NAMES[s.p]||'')});
+  for(const s of SPOTS)IDX.push({ty:s.g==='5A'?'5A景点':'景点',n:s.n,k:s.id,sub:short(NAMES[s.c]||'')+' · '+short(NAMES[s.p]||'')});
 }
 const q=$('#q'),sug=$('#sug');let hits=[],hi=0;
 function drawSug(){
@@ -734,7 +746,7 @@ function pick(x){
   sug.hidden=true;q.value='';q.blur();if(!x)return;
   if(x.ty==='国家'){if(x.cn)nav('#china');else goThen('#world',()=>focusArea(x.k));}
   else if(x.ty==='省')nav('#p-'+x.k);
-  else if(x.ty==='景点'){const s=SPOT[x.k];if(s)goThen('#p-'+s.p,()=>focusSpot(x.k));}
+  else if(x.ty==='景点'||x.ty==='5A景点'){const s=SPOT[x.k];if(s)goThen('#p-'+s.p,()=>focusSpot(x.k));}
   else goThen('#p-'+x.k.slice(0,2)+'0000',()=>focusArea(x.k));
 }
 
