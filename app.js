@@ -1,5 +1,5 @@
 /* 我的世界足迹 — 世界 → 中国 → 省 三级可标记地图
- * 数据保存：Claude 云端（在 Claude 里打开时）/ GitHub 仓库里的 footprints.json / 本机浏览器
+ * 数据保存：Claude 云端（在 Claude 里打开时）/ GitHub 仓库里的 footprints.json（主人用令牌，或别人登录后经服务器提交）/ 本机浏览器
  */
 (function(){
 'use strict';
@@ -15,7 +15,7 @@ const W2CN={TW:'710000',HK:'810000',MO:'820000'};
 const PIN='M0 0C-1.5-4.5-8-8.2-8-13.5a8 8 0 1 1 16 0C8-8.2 1.5-4.5 0 0Z';
 // 小红旗：旗杆底部在 (0,0)
 const FLAG_POLE='M-0.9 0V-20h1.8V0Z',FLAG_CLOTH='M1-20C4.5-21.6 8-18.4 13-20V-11.6C8-10 4.5-13.2 1-11.6Z';
-const LS='worldmap.v2',LS1='worldmap.v1',LSG='worldmap.gh';
+const LS='worldmap.v2',LS1='worldmap.v1',LSG='worldmap.gh',LSA='worldmap.api';
 const CN_BOX={type:'MultiPoint',coordinates:[[73.5,39.4],[135.1,48.4],[123.3,53.6],[109.6,18.1],[97.3,28.2],[87.5,49.2]]};
 const INSET_PROV=['440000','450000','460000','710000','350000','810000','820000'];
 const HINTS={
@@ -136,6 +136,7 @@ function put(col,id,v){
   if(backend==='claude'){qPut(col,id,v);return;}
   saveLocal();
   if(backend==='github')ghSchedule();
+  else if(backend==='api'){AP.q.set(col+'/'+id,{c:col,k:id,v:v||null});apiSchedule();}
 }
 // Claude 云端：一次写一份，同一份文档合并排队
 const pend=new Map();let working=false;
@@ -207,7 +208,7 @@ async function ghFlush(){
   }
   GH.busy=false;if(GH.again)ghFlush();
 }
-window.addEventListener('beforeunload',e=>{if(backend==='github'&&(GH.timer||GH.busy)){e.preventDefault();e.returnValue='';}});
+window.addEventListener('beforeunload',e=>{if((backend==='github'&&(GH.timer||GH.busy))||(backend==='api'&&(AP.timer||AP.busy||AP.q.size))){e.preventDefault();e.returnValue='';}});
 function mergeObj(a,b){const o=Object.assign({},a);for(const [k,v] of Object.entries(b)){if(!o[k]||(+v.t||0)>(+o[k].t||0))o[k]=v;}return o;}
 async function ghConnect(repo,branch,token){
   const c={repo:repo.trim().replace(/^https?:\/\/github\.com\//i,'').replace(/\.git$/,'').replace(/\/+$/,''),branch:(branch||'main').trim()||'main',token:token.trim()};
@@ -232,6 +233,85 @@ function ghDisconnect(){
   try{localStorage.removeItem(LSG);}catch(e){}
   GH.cfg=null;GH.sha=null;clearTimeout(GH.timer);GH.timer=0;backend='local';setSync('local');updGhBtn();
 }
+// 登录编辑：账号密码交给 site.json 里写的登录服务（自己的服务器）验证；
+// 登录后的改动发给服务器，由服务器在 GitHub 最新的 footprints.json 上合并提交，GitHub 令牌不经过浏览器
+let SITE={api:'',sites:[]};
+async function loadSite(){
+  try{
+    const s=await getJSON('site.json?t='+Date.now());
+    if(s&&typeof s.api==='string'&&/^https?:\/\/\S+$/.test(s.api))SITE.api=s.api.replace(/\/+$/,'');
+    if(s&&Array.isArray(s.sites))SITE.sites=s.sites.filter(x=>x&&typeof x.url==='string'&&/^https?:\/\//.test(x.url)&&x.name).slice(0,6);
+  }catch(e){}
+}
+function renderSites(){
+  const el=$('#sites');if(!SITE.sites.length){el.hidden=true;return;}
+  el.setAttribute('aria-label','访问网址');
+  el.innerHTML=SITE.sites.map(x=>{
+    let cur=false;try{const u=new URL(x.url);cur=u.host===location.host&&location.pathname.startsWith(u.pathname.replace(/index\.html?$/,''));}catch(e){}
+    const sub=[x.desc,cur?'当前':''].filter(Boolean).join(' · ');
+    return `<a href="${esc(x.url)}"${cur?' aria-current="page"':''}>${esc(x.name)}${sub?`<small>${esc(sub)}</small>`:''}</a>`;
+  }).join('');
+  el.hidden=false;
+}
+const AP={sess:null,q:new Map(),timer:0,busy:false,again:false,retry:0,last:0,lastUser:''};
+function apiReadSess(){try{const o=JSON.parse(localStorage.getItem(LSA)||'null');return o&&o.token&&o.api===SITE.api&&o.exp*1000>Date.now()+60000?o:null;}catch(e){return null;}}
+function apiDropSess(){AP.sess=null;try{localStorage.removeItem(LSA);}catch(e){}}
+async function apiFetch(path,opt){
+  const h={'Content-Type':'application/json'};if(AP.sess)h.Authorization='Bearer '+AP.sess.token;
+  let r;
+  try{r=await fetch(SITE.api+path,Object.assign({cache:'no-store'},opt||{},{headers:h}));}
+  catch(e){const x=new Error('net');x.status=0;x.msg='连不上登录服务，请检查网络后再试。';throw x;}
+  let j=null;try{j=await r.json();}catch(e){}
+  if(!r.ok){const x=new Error('api');x.status=r.status;x.msg=(j&&j.error)||('登录服务返回了错误（'+r.status+'）');throw x;}
+  return j||{};
+}
+// 用服务器返回的最新足迹替换本地，再把还没发出去的改动叠上去
+function applyRemote(j){
+  const m=normMarks(j.marks),p=normPins(j.pins);
+  for(const o of AP.q.values()){const d=o.c==='marks'?m:p;if(o.v)d[o.k]=o.v;else delete d[o.k];}
+  marks=m;pins=p;saveLocal();renderAll();
+}
+async function enterApi(){
+  setSync('api-loading');
+  const j=await apiFetch('/footprints');
+  backend='api';ro=false;document.body.classList.remove('ro');
+  applyRemote(j);AP.last=Date.now();setMode(mode);updLoginBtn();
+  if(sel&&lastPt)showCard(lastPt);
+  if(AP.q.size)apiFlush();else setSync('api-ok');
+}
+function apiSchedule(){setSync('api-saving');clearTimeout(AP.timer);AP.timer=setTimeout(apiFlush,1200);}
+async function apiFlush(){
+  clearTimeout(AP.timer);AP.timer=0;
+  if(!AP.sess){setSync('api-auth');return;}
+  if(AP.busy){AP.again=true;return;}
+  if(!AP.q.size){setSync('api-ok');return;}
+  AP.busy=true;AP.again=false;
+  const batch=new Map(AP.q);AP.q.clear();
+  try{
+    const j=await apiFetch('/footprints',{method:'POST',body:JSON.stringify({ops:[...batch.values()]})});
+    AP.retry=0;AP.last=Date.now();applyRemote(j);setSync(AP.q.size?'api-saving':'api-ok');
+  }catch(e){
+    if(e.status===400){setSync('api-err');toast(e.msg);}
+    else{
+      for(const [k,v] of batch)if(!AP.q.has(k))AP.q.set(k,v);
+      if(e.status===401)apiExpired();
+      else{setSync('api-err');syncEl.textContent=e.msg+' 改动先存在这个浏览器里，稍后会自动重试。';if(AP.retry<6){AP.retry++;AP.timer=setTimeout(apiFlush,5000*AP.retry);}}
+    }
+  }
+  AP.busy=false;
+  if(AP.again&&AP.sess)apiFlush();
+}
+function apiExpired(){
+  apiDropSess();setSync('api-auth');updLoginBtn();
+  openLogin('登录已过期，请重新登录。没保存的改动还在，登录后会接着保存。');
+}
+// 切回这个页面时，取一次别人刚做的修改
+async function apiRefresh(){
+  if(backend!=='api'||!AP.sess||AP.busy||AP.q.size||AP.timer||Date.now()-AP.last<15000)return;
+  try{const j=await apiFetch('/footprints');AP.last=Date.now();if(!AP.busy&&!AP.q.size)applyRemote(j);}
+  catch(e){if(e.status===401)apiExpired();}
+}
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')apiRefresh();});
 function setSync(s){
   const t={init:'正在读取足迹…',ok:'已自动保存，换台设备打开也在。',
     local:envClaude?'目前只保存在这个浏览器里。':'目前只保存在这个浏览器里。连接 GitHub 后可以多设备同步。',
@@ -241,7 +321,11 @@ function setSync(s){
     'gh-auth':'GitHub 令牌无效或没有写入权限，改动先存在这个浏览器里。请点「GitHub 设置」重新连接。',
     'gh-err':'保存到 GitHub 没成功（可能是网络问题），改动先存在这个浏览器里，稍后会自动重试。',
     'gh-offline':'暂时连不上 GitHub，先显示这台设备上的缓存。',
-    'gh-view':'只读：这是发布在 GitHub 上的足迹地图。主人点「连接 GitHub」后就能编辑。'}[s]||'';
+    'gh-view':SITE.api&&!envClaude?'只读：这是发布在 GitHub 上的足迹地图。有账号的话，点地图上方的「登录编辑」就能一起修改。':'只读：这是发布在 GitHub 上的足迹地图。主人点「连接 GitHub」后就能编辑。',
+    'api-loading':'正在读取最新足迹…','api-ok':'已登录为 '+(AP.sess?AP.sess.user:'')+'，改动会自动保存，两个网址都能看到。','api-saving':'正在保存…',
+    'api-err':'保存没成功（可能是网络问题），改动先存在这个浏览器里，稍后会自动重试。',
+    'api-auth':'登录已过期，请重新登录；没保存的改动还在这个浏览器里。',
+    'api-down':'登录服务暂时连不上，先以只读方式显示。'}[s]||'';
   syncEl.textContent=t;syncEl.dataset.s=s;
 }
 function setReadOnly(){ro=true;document.body.classList.add('ro');setMode('view');setSync('ro');if(sel)showCard(lastPt);renderAll();}
@@ -706,7 +790,7 @@ async function route(){
 function setMode(m){
   mode=ro?'view':m;
   document.querySelectorAll('.modes button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.m===mode)));
-  $('#hint').textContent=ro?'这是一张只读的足迹地图：点国家、省份、城市或景点看看。':HINTS[view][mode];
+  $('#hint').textContent=ro?'这是一张只读的足迹地图：点国家、省份、城市或景点看看。'+(SITE.api&&!envClaude?'有账号的话，点「登录编辑」就能一起修改。':''):HINTS[view][mode];
   svg.attr('data-mode',mode);
   if(sel&&sel.t==='new'&&mode!=='pin')closeCard();
 }
@@ -714,7 +798,7 @@ document.querySelectorAll('.modes button').forEach(b=>b.addEventListener('click'
 $('#zin').addEventListener('click',()=>svg.transition().duration(reduce?0:300).call(zoom.scaleBy,1.6));
 $('#zout').addEventListener('click',()=>svg.transition().duration(reduce?0:300).call(zoom.scaleBy,1/1.6));
 $('#zre').addEventListener('click',()=>{go(d3.zoomIdentity);closeCard();});
-document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(!$('#ghDlg').hidden)$('#ghDlg').hidden=true;else if(!cardEl.hidden)closeCard();}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(!$('#loginDlg').hidden)$('#loginDlg').hidden=true;else if(!$('#ghDlg').hidden)$('#ghDlg').hidden=true;else if(!cardEl.hidden)closeCard();}});
 
 /* ---------- 搜索（国家、省、市、景点） ---------- */
 let IDX=[];
@@ -794,7 +878,43 @@ $('#bClear').addEventListener('click',e=>{
   toast('已清空全部标记',()=>{marks=pm;pins=pp;for(const [k,v] of Object.entries(pm))put('marks',k,v);for(const [k,v] of Object.entries(pp))put('pins',k,v);renderAll();});
 });
 const dlg=$('#ghDlg');
-function updGhBtn(){const b=$('#ghBtn');b.hidden=envClaude;b.textContent=backend==='github'?'GitHub 设置':'连接 GitHub';}
+function updGhBtn(){const b=$('#ghBtn');b.hidden=envClaude;b.textContent=backend==='github'?'GitHub 设置':'连接 GitHub';updLoginBtn();}
+function updLoginBtn(){
+  const b=$('#loginBtn'),on=backend==='api'&&!!AP.sess;
+  b.hidden=envClaude||!SITE.api||backend==='github';
+  b.textContent=on?AP.sess.user+' · 退出登录':'登录编辑';b.classList.toggle('on',on);
+}
+const lgDlg=$('#loginDlg');
+function openLogin(msg){
+  const err=$('#lgErr');err.textContent=msg||'';err.hidden=!msg;
+  $('#lgPass').value='';if(!$('#lgUser').value&&AP.lastUser)$('#lgUser').value=AP.lastUser;
+  lgDlg.hidden=false;($('#lgUser').value?$('#lgPass'):$('#lgUser')).focus();
+}
+$('#loginBtn').addEventListener('click',()=>{
+  if(backend==='api'&&AP.sess){
+    if(AP.q.size||AP.busy||AP.timer){toast('还有改动正在保存，稍等几秒再退出。');apiFlush();return;}
+    apiDropSess();location.reload();return;
+  }
+  openLogin();
+});
+$('#lgCancel').addEventListener('click',()=>{lgDlg.hidden=true;});
+lgDlg.addEventListener('click',e=>{if(e.target===lgDlg)lgDlg.hidden=true;});
+$('#loginForm').addEventListener('submit',async e=>{
+  e.preventDefault();
+  const b=$('#lgOk'),err=$('#lgErr');err.hidden=true;
+  const user=$('#lgUser').value.trim(),password=$('#lgPass').value;
+  if(!user||!password){err.textContent='请填写账号和密码。';err.hidden=false;return;}
+  b.disabled=true;b.textContent='登录中…';
+  try{
+    AP.sess=null;
+    const j=await apiFetch('/login',{method:'POST',body:JSON.stringify({user,password})});
+    AP.sess={token:j.token,user:j.user,exp:j.exp,api:SITE.api};AP.lastUser=j.user;
+    try{localStorage.setItem(LSA,JSON.stringify(AP.sess));}catch(x){}
+    await enterApi();
+    lgDlg.hidden=true;$('#lgPass').value='';toast('已登录为 '+j.user+'，现在可以修改地图了。');
+  }catch(x){err.textContent=x.msg||'登录失败，请稍后再试。';err.hidden=false;}
+  b.disabled=false;b.textContent='登录';
+});
 $('#ghBtn').addEventListener('click',()=>{
   const c=GH.cfg||ghReadCfg();
   $('#ghRepo').value=(c&&c.repo)||ghGuess();$('#ghBranch').value=(c&&c.branch)||(MIRROR&&MIRROR.branch)||'main';
@@ -837,7 +957,8 @@ async function initStorage(){
     },()=>{gp=true;done();setSync('err');});
     return;
   }
-  await loadMirror();
+  await Promise.all([loadMirror(),loadSite()]);
+  renderSites();
   updGhBtn();
   const repo=ghGuess();
   if(repo){const ab=$('#about');ab.innerHTML=`这是一张旅行足迹地图，金色和小红旗是去过的地方，蓝色斜纹是想去的地方。网页代码在 <a href="https://github.com/${esc(repo)}">github.com/${esc(repo)}</a>，你也可以复制一份，做自己的足迹地图。`;ab.hidden=false;}
@@ -849,6 +970,14 @@ async function initStorage(){
     try{const cur=await ghGet(cfg);GH.sha=cur.sha;marks=normMarks(cur.data&&cur.data.marks);pins=normPins(cur.data&&cur.data.pins);saveLocal();renderAll();setSync('gh-ok');}
     catch(e){setSync(e.status===401||e.status===403||e.status===404?'gh-auth':'gh-offline');}
     return;
+  }
+  // 之前在这个网址登录过：直接进入可编辑状态
+  const sess=SITE.api?apiReadSess():null;let apiDown=false;
+  if(sess){
+    AP.sess=sess;AP.lastUser=sess.user;
+    const cached=readLocal();if(cached){marks=cached.marks;pins=cached.pins;renderAll();}
+    try{await enterApi();return;}
+    catch(e){if(e.status===401)apiDropSess();else apiDown=true;}
   }
   // 没连 GitHub：如果仓库里已经发布了足迹，就以只读方式展示；否则在本机编辑
   let pub=null;
@@ -862,6 +991,8 @@ async function initStorage(){
   }else{
     backend='local';const l=readLocal();if(l){marks=l.marks;pins=l.pins;}setSync('local');renderAll();
   }
+  if(apiDown){AP.sess=null;setSync('api-down');}
+  updLoginBtn();
 }
 (async function start(){
   envClaude=!!(window.claude&&typeof window.claude.use==='function');

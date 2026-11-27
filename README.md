@@ -2,7 +2,7 @@
 
 一张可以自己标记的旅行足迹地图。去过的地方涂成**金色**、插上**小红旗**，想去的地方用**蓝色斜纹**占个位，从世界一路点进中国的省、市和景点。
 
-纯静态网页，用 GitHub Pages 免费托管，不需要服务器，也不用安装任何东西。
+纯静态网页，用 GitHub Pages 免费托管，不需要服务器也能用。有自己的服务器的话，还可以放一份国内镜像，并让朋友登录后一起编辑。
 
 **在线地图**：点仓库页面右侧 About 里的链接。
 
@@ -19,6 +19,8 @@
 - **统计**：去过几个国家、点亮了多少世界陆地、踏足几个大洲；在中国去过几个省、几个市、打卡几个景点。
 - **搜索**：国家、省、城市、景点都能搜，搜「九寨沟」会直接跳到四川地图。
 - **多设备同步**：连上 GitHub 后，标记自动保存到仓库里，电脑、手机都能改；别人打开网址只能看，不能改。
+- **登录后一起编辑**（v3.0，需要自己的服务器）：给朋友一个账号密码，他们点地图上方的「登录编辑」，就能和你一样修改同一张地图；每次修改都会在 GitHub 上留下记录，写明是谁改的。
+- **两个网址**：页面顶部列出 GitHub Pages 和国内镜像两个网址，国外、国内各选快的那个打开。
 - 手机、电脑都能用，支持深色模式。
 
 | 中国：点省份进入局部图 | 省：城市 + 景点打卡 | 手机上 |
@@ -34,12 +36,13 @@
 1. 点本仓库右上角的 **Fork**，复制一份到你自己的账号。
 2. 在你的仓库里打开 **Settings → Pages**，Source 选 **Deploy from a branch**，Branch 选 **main**、文件夹选 **/(root)**，点 Save。等 1～2 分钟，网址是 `https://你的用户名.github.io/仓库名/`。
 3. 把 `footprints.json` 的内容改成 `{"v":2,"marks":{},"pins":{}}`，清掉原作者的足迹（在 GitHub 网页上点这个文件 → 铅笔图标 → 修改 → Commit）。
+   再把 `site.json` 里的网址改成你自己的；没有自己的服务器就把 `api` 改成 `""`、`sites` 改成 `[]`（见下面「让别人登录后一起编辑」）。
 4. 按下面的「让标记保存到仓库」连接你自己的令牌，就可以开始标了。
 
 ## 部署步骤（从压缩包上传）
 
 1. **新建仓库**：GitHub 右上角「+」→ New repository，选 **Public**，然后 Create repository。
-2. **上传文件**：在新仓库页面点 **uploading an existing file**，把文件夹里的**全部内容**（`index.html`、`app.js`、`style.css`、`footprints.json`、`README.md`，以及 `data`、`lib`、`fonts`、`mirror`、`docs` 这几个文件夹）一起拖进去，再点 Commit changes。
+2. **上传文件**：在新仓库页面点 **uploading an existing file**，把文件夹里的**全部内容**（`index.html`、`app.js`、`style.css`、`site.json`、`footprints.json`、`README.md`，以及 `data`、`lib`、`fonts`、`mirror`、`docs` 这几个文件夹）一起拖进去，再点 Commit changes。
 3. **打开 Pages**：Settings → Pages → Source 选 **Deploy from a branch**，Branch 选 **main**、文件夹选 **/(root)**，点 Save。
 
 ## 让标记保存到仓库
@@ -73,14 +76,48 @@ GitHub Pages 在国内打开比较慢。有自己的服务器和域名的话，�
    bash setup.sh 你的域名
    ```
 
-脚本会装好 nginx，把仓库克隆到 `/var/www/travel-footprints`，设置每分钟同步，开启 gzip 压缩，并申请免费的 HTTPS 证书。服务器上不需要 GitHub 令牌。
+脚本会装好 nginx，把网页下载到 `/var/www/travel-footprints`，设置每分钟同步（只用 curl，不需要 git），开启 gzip 压缩，并申请免费的 HTTPS 证书。服务器上不需要 GitHub 令牌。
 
-**服务器的 443 端口已经被 Xray Reality 使用时**，改用 `setup-reality.sh`（用法相同，把上面命令里的 `setup.sh` 换成 `setup-reality.sh`）。它让 nginx 接管 443 端口，只看连接里的域名来分流：访问网站域名的交给网站，其余连接原样转给 Xray（改为只在本机监听），代理客户端不用改。改 Xray 之前会备份，切换后自动检查网站和 Reality，不通过就自动恢复原样；`bash setup-reality.sh --undo` 可以随时撤销。
+**服务器的 443 端口已经被 Xray Reality 使用时**，改用 `setup-reality.sh`（用法相同，把上面命令里的 `setup.sh` 换成 `setup-reality.sh`）。它让 HAProxy 接管 443 端口（Debian 11 自带的 nginx 不支持按域名分流），只看连接里的域名来分流：访问网站域名的交给网站，其余连接原样转给 Xray（改为只在本机监听），代理客户端不用改。改 Xray 之前会备份，切换后自动检查网站和 Reality，不通过就自动恢复原样；`bash setup-reality.sh --undo` 可以随时撤销。
 
 - 无论在 GitHub Pages 还是在镜像站上标记，足迹都保存到 GitHub，镜像站一分钟内就会同步到。
 - 镜像站的访客直接读服务器上的 `footprints.json`，不经过 GitHub，所以国内打开更快。
 - 在镜像站上编辑需要再点一次「连接 GitHub」，因为令牌是按网址分别保存在浏览器里的。
 - 以后网页更新，只要上传到 GitHub，镜像站会自动跟着更新。
+
+## 让别人登录后一起编辑（v3.0）
+
+需要先按上一节部署好国内镜像。登录和保存都由你的服务器负责：
+
+- 账号由你在服务器上添加。密码只以加盐哈希的形式保存；同一个账号连续输错 5 次，会暂停 15 分钟。
+- 登录后的改动发给服务器，由服务器用它自己保存的 GitHub 令牌提交到仓库，令牌不会发给浏览器。服务器会在 GitHub 上最新的 `footprints.json` 上合并改动，几个人同时改不同的地方不会互相覆盖。
+- GitHub Pages 和镜像站两个网址都用这个服务登录，改的是同一张地图。你自己原来用令牌「连接 GitHub」的方式照常可用。
+
+部署：把 `mirror/setup-api.sh` 传到服务器，用 root 运行 `bash setup-api.sh`。它会提示粘贴一个 GitHub 令牌（建议给服务器单独建一个，权限和上面「让标记保存到仓库」一样），再设置你自己的账号。之后在服务器上管理账号：
+
+```bash
+travel-footprints-user add 名字      # 添加账号（会提示设置密码）
+travel-footprints-user passwd 名字   # 改密码（这个账号已登录的设备需要重新登录）
+travel-footprints-user del 名字      # 删除账号
+travel-footprints-user list          # 列出账号
+travel-footprints-user logout 名字   # 让这个账号在所有设备上退出登录
+travel-footprints-user token         # 更换服务器上的 GitHub 令牌
+travel-footprints-user check         # 检查配置和令牌
+```
+
+网页通过仓库里的 `site.json` 找到登录服务和两个网址。做自己的地图时，把里面的地址改成你自己的；不需要登录功能就把 `api` 改成空字符串 `""`：
+
+```json
+{
+  "api": "https://你的域名/api",
+  "sites": [
+    { "name": "GitHub Pages", "desc": "国外访问更快", "url": "https://你的用户名.github.io/仓库名/" },
+    { "name": "国内镜像", "desc": "国内访问更快", "url": "https://你的域名/" }
+  ]
+}
+```
+
+改错了也能找回：每次修改都是仓库里的一次提交（说明为「更新旅行足迹（账号名）」），可以在 GitHub 上查看历史，把 `footprints.json` 恢复到之前的版本。
 
 ## 文件说明
 
@@ -98,6 +135,8 @@ GitHub Pages 在国内打开比较慢。有自己的服务器和域名的话，�
 | `fonts/` | 数字用的 Archivo 字体（中文用系统自带字体） |
 | `mirror/setup.sh` | 在自己服务器上部署国内镜像的脚本 |
 | `mirror/setup-reality.sh` | 同上，用于 443 端口已经被 Xray Reality 使用的服务器 |
+| `mirror/setup-api.sh` | 在服务器上部署登录编辑服务和账号管理命令 |
+| `site.json` | 登录服务地址和页面顶部列出的网址 |
 | `docs/` | README 里的截图 |
 | `CHANGELOG.md` | 更新日志（每个版本改了什么） |
 

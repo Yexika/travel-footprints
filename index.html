@@ -15,6 +15,7 @@
   <div class="ttl">
     <h1>我的世界足迹</h1>
     <p>去过的地方涂成金色、插上小红旗，想去的地方先用蓝色斜纹占个位。点中国进入省份，点省份看城市和景点。</p>
+    <p class="sites" id="sites" hidden></p>
   </div>
   <div class="stats" id="stats"></div>
 </header>
@@ -32,6 +33,7 @@
       <button data-m="want" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" rx="3" style="fill:var(--wantbg);stroke:var(--want)"/><path d="M4 9.5l5.5-5.5M5.5 12.5l7-7" style="stroke:var(--want);stroke-width:1.8"/></svg>涂·想去</button>
       <button data-m="pin" aria-pressed="false"><svg viewBox="-9 -23 18 24" aria-hidden="true"><path d="M0 0C-1.5-4.5-8-8.2-8-13.5a8 8 0 1 1 16 0C8-8.2 1.5-4.5 0 0Z" fill="currentColor"/></svg>放地点</button>
     </div>
+    <button class="btn login" id="loginBtn" type="button" hidden>登录编辑</button>
     <div class="search">
       <input id="q" type="search" placeholder="搜国家、省、城市或景点，如 九寨沟" autocomplete="off" aria-label="搜索">
       <ul id="sug" role="listbox" hidden></ul>
@@ -106,6 +108,20 @@
       <button class="btn" id="ghCancel">取消</button>
     </div>
   </div>
+</div>
+
+<div class="modal" id="loginDlg" hidden>
+  <form class="mbox" id="loginForm" role="dialog" aria-modal="true" aria-labelledby="loginT">
+    <h2 id="loginT">登录后一起编辑</h2>
+    <p>账号由地图主人添加。登录后可以和主人一样标记、修改、删除，改动会保存到同一张地图上，两个网址都能看到。</p>
+    <label class="fl">账号<input id="lgUser" autocomplete="username" autocapitalize="off" spellcheck="false" required></label>
+    <label class="fl">密码<input id="lgPass" type="password" autocomplete="current-password" required></label>
+    <p class="err" id="lgErr" hidden></p>
+    <div class="row">
+      <button class="btn pri" id="lgOk" type="submit">登录</button>
+      <button class="btn" id="lgCancel" type="button">取消</button>
+    </div>
+  </form>
 </div>
 
 <div class="toast" id="toast" role="status" hidden><span></span><button>撤销</button></div>

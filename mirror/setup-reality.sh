@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # 旅行足迹地图 · 镜像站部署（服务器的 443 端口已经被 Xray Reality 使用时用这个脚本）
 #
-# 做法：nginx 接管 443 端口，只看连接里的域名（SNI）来分流，不解密任何代理流量：
+# 做法：HAProxy 接管 443 端口，只看连接里的域名（SNI）来分流，不解密任何代理流量
+#      （Debian 11 自带的 nginx 没有按域名分流的模块，所以分流交给 HAProxy，nginx 只负责网站）：
 #   访问 本站域名 或 www.本站域名 → 网站（Let's Encrypt 免费证书）
 #   其余所有连接（代理客户端、探测）    → 原样转给 Xray（Xray 改为只在本机 127.0.0.1 监听）
 # 代理客户端的配置不用改。改 Xray 之前会备份配置；切换后自动检查网站和 Reality，
@@ -17,14 +18,17 @@ set -euo pipefail
 WEB=/var/www/travel-footprints
 ACME=/var/www/letsencrypt
 SITE_CONF=/etc/nginx/conf.d/travel-footprints.conf
-STREAM_DIR=/etc/nginx/stream.d
-STREAM_CONF=$STREAM_DIR/travel-footprints.conf
-NGINX_MAIN=/etc/nginx/nginx.conf
+HACFG=/etc/haproxy/haproxy.cfg
+HADIST=/etc/haproxy/haproxy.cfg.before-travel-footprints
+HAMARK="# travel-footprints: 443 SNI split"
+V6=0
 XCONF="${XRAY_CONFIG:-/usr/local/etc/xray/config.json}"
 XBACKUP="$XCONF.before-travel-footprints"
 STATE=/etc/travel-footprints-reality.env
 NAME=travel-footprints-sync
 PY=/tmp/travel-footprints-xray.py
+XNEW=/tmp/travel-footprints-xray-new.json
+XUNDO=/tmp/travel-footprints-xray-undo.json
 XPORT=""; SITE_PORT=""; ORIG_LISTEN=""
 
 say(){ printf '\n\033[1;32m==>\033[0m %s\n' "$*"; }
@@ -43,7 +47,13 @@ pick_port(){
   for p in "$@"; do [ -z "$(port_holder "$p")" ] && { echo "$p"; return 0; }; done
   die "本机端口 $* 都被占用了，请把这一行发给我。"
 }
-xray_test(){ "$XBIN" run -test -c "$1" >/dev/null 2>&1 || "$XBIN" -test -config "$1" >/dev/null 2>&1; }
+xray_test(){  # Xray 按扩展名判断配置格式，所以临时文件都以 .json 结尾；没通过时显示 Xray 的报错
+  local out
+  out="$("$XBIN" run -test -c "$1" 2>&1)" && return 0
+  "$XBIN" -test -config "$1" >/dev/null 2>&1 && return 0
+  printf '%s\n' "$out" | tail -n 8 >&2
+  return 1
+}
 reality_ok(){  # 用 Reality 的伪装域名握手一次：能拿到证书说明 Reality 正常转发
   timeout 15 openssl s_client -connect "127.0.0.1:$1" -servername "$SNI" </dev/null 2>/dev/null | grep -q 'BEGIN CERTIFICATE'
 }
@@ -84,6 +94,7 @@ PY
 site_locations(){
 cat <<EOF
     root $WEB;
+    include /etc/nginx/travel-footprints.d/*.conf;
     index index.html;
     charset utf-8;
 
@@ -110,6 +121,7 @@ EOF
 
 write_site_conf(){  # serve：80 端口直接提供网站；https：80 跳转，网站在本机端口上走 https
   local v6=""
+  mkdir -p /etc/nginx/travel-footprints.d   # 附加配置（比如 setup-api.sh 的 /api/ 转发）放在这里，重新生成配置时也会保留
   [ -f /proc/net/if_inet6 ] && v6="    listen [::]:80;"
   {
     echo "# 旅行足迹地图 · 镜像站（由 mirror/setup-reality.sh 生成，重新运行脚本会覆盖）"
@@ -122,7 +134,7 @@ write_site_conf(){  # serve：80 端口直接提供网站；https：80 跳转，
       echo "    location / { return 301 https://\$host\$request_uri; }"
       echo "}"
       echo
-      echo "# 443 端口由 nginx 按域名分流（$STREAM_CONF），访问本站的连接转到这里"
+      echo "# 443 端口由 HAProxy 按域名分流（$HACFG），访问本站的连接转到这里"
       echo "server {"
       echo "    listen 127.0.0.1:$SITE_PORT ssl http2;"
       echo "    server_name $NAMES;"
@@ -143,36 +155,46 @@ write_site_conf(){  # serve：80 端口直接提供网站；https：80 跳转，
   if [ -n "$v6" ] && ! nginx -t >/dev/null 2>&1; then sed -i '/listen \[::\]:80;/d' "$SITE_CONF"; fi
 }
 
-write_stream_conf(){
-  local n map="" v6=""
-  for n in $NAMES; do map="$map        $n 127.0.0.1:$SITE_PORT;"$'\n'; done
-  [ -f /proc/net/if_inet6 ] && v6="        listen [::]:443;"
-  mkdir -p "$STREAM_DIR"
-  cat >"$STREAM_CONF" <<EOF
-# 旅行足迹地图：443 端口按域名（SNI）分流，只读取域名，不解密流量
-# 访问本站 → 本机 $SITE_PORT 端口的网站；其余（代理客户端、探测）→ 本机 $XPORT 端口的 Xray
-stream {
-    map \$ssl_preread_server_name \$travelfp_backend {
-$map        default 127.0.0.1:$XPORT;
-    }
-    server {
-        listen 443;
-$v6
-        ssl_preread on;
-        proxy_pass \$travelfp_backend;
-        proxy_connect_timeout 5s;
-        proxy_timeout 1h;
-    }
-}
+write_haproxy_cfg(){
+  local bind="    bind *:443"
+  [ "$V6" = 1 ] && bind="    bind :::443 v4v6"
+  cat >"$HACFG" <<EOF
+$HAMARK
+# 旅行足迹地图：443 端口按域名（SNI）分流，只读取域名，不解密流量（由 mirror/setup-reality.sh 生成）
+# 访问本站 → 本机 $SITE_PORT 端口的网站（nginx）；其余（代理客户端、探测）→ 本机 $XPORT 端口的 Xray
+global
+    log /dev/log local0 warning
+    user haproxy
+    group haproxy
+
+defaults
+    mode tcp
+    log global
+    timeout connect 5s
+    timeout client 1h
+    timeout server 1h
+
+frontend travelfp_443
+$bind
+    tcp-request inspect-delay 5s
+    tcp-request content accept if { req.ssl_hello_type 1 }
+    use_backend travelfp_site if { req.ssl_sni -i $NAMES }
+    default_backend travelfp_xray
+
+backend travelfp_site
+    server site 127.0.0.1:$SITE_PORT
+
+backend travelfp_xray
+    server xray 127.0.0.1:$XPORT
 EOF
-  grep -q "^include $STREAM_DIR/\*.conf;" "$NGINX_MAIN" || printf '\n# travel-footprints：443 端口按域名分流\ninclude %s/*.conf;\n' "$STREAM_DIR" >>"$NGINX_MAIN"
-  if [ -n "$v6" ] && ! nginx -t >/dev/null 2>&1; then sed -i '/listen \[::\]:443;/d' "$STREAM_CONF"; fi
 }
 
-restore_original(){  # restore_original Xray配置来源：恢复 Xray 直接监听 443，nginx 不再占用 443（网站改回 http）
-  rm -f "$STREAM_CONF"
+restore_original(){  # restore_original Xray配置来源：停掉 HAProxy，恢复 Xray 直接监听 443（网站改回 http）
+  systemctl stop haproxy >/dev/null 2>&1 || true
+  systemctl disable haproxy >/dev/null 2>&1 || true
+  if [ -f "$HADIST" ]; then cp -p "$HADIST" "$HACFG"; fi
   write_site_conf serve
-  nginx -t >/dev/null 2>&1 && systemctl restart nginx
+  nginx -t >/dev/null 2>&1 && systemctl reload nginx
   wait_port 443 "" 10 || true
   cat "$1" >"$XCONF"
   systemctl restart xray
@@ -198,21 +220,21 @@ if [ "${1:-}" = "--undo" ]; then
   command -v python3 >/dev/null 2>&1 && write_py
   # 优先只把入站端口改回 443（保留切换之后对 Xray 做的其他修改）；不行再用切换前的备份
   if [ -n "$XPORT" ] && command -v python3 >/dev/null 2>&1 \
-     && python3 "$PY" back "$XCONF" "$XPORT" "$XCONF.undo" "$ORIG_LISTEN" | grep -q '^COUNT=1$' \
-     && xray_test "$XCONF.undo"; then
-    SRC="$XCONF.undo"
+     && python3 "$PY" back "$XCONF" "$XPORT" "$XUNDO" "$ORIG_LISTEN" | grep -q '^COUNT=1$' \
+     && xray_test "$XUNDO"; then
+    SRC="$XUNDO"
   else
     SRC="$XBACKUP"
   fi
   cp -p "$XCONF" "$XCONF.before-undo"
   if restore_original "$SRC"; then
-    rm -f "$XCONF.undo"
+    rm -f "$XUNDO"
     mv "$XBACKUP" "$XBACKUP.restored-$(date +%Y%m%d%H%M%S)"
     rm -f "$STATE"
     say "已撤销：Xray 照常监听 443。网站还在，可以用 http://$DOMAIN 访问。"
     exit 0
   fi
-  die "Xray 没能重新监听 443。手动恢复：cp $XBACKUP $XCONF && systemctl restart nginx && systemctl restart xray"
+  die "Xray 没能重新监听 443。手动恢复：systemctl stop haproxy && cp $XBACKUP $XCONF && systemctl restart xray"
 fi
 
 DOMAIN="$(printf '%s' "${1:-}" | tr 'A-Z' 'a-z' | sed -E 's#^https?://##; s#/.*$##; s#^www\.##')"
@@ -225,13 +247,15 @@ printf '%s' "$REPO" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || die "仓�
 H443="$(port_holder 443)"
 if [ "$H443" = xray ]; then
   MODE=fresh
-elif [ "$H443" = nginx ] && [ -f "$STREAM_CONF" ] && [ -f "$STATE" ] && [ -f "$XBACKUP" ]; then
+elif [ "$H443" = haproxy ] && grep -qF "$HAMARK" "$HACFG" 2>/dev/null && [ -f "$STATE" ] && [ -f "$XBACKUP" ]; then
   MODE=rerun
 elif [ -z "$H443" ]; then
   die "443 端口现在没有程序在用。Xray 是不是没在运行？可以先 systemctl status xray 看看。"
 else
   die "443 端口正在被 $H443 使用。这个脚本只处理 Xray Reality，没有做任何改动。"
 fi
+# 现在占用 443 的程序如果同时听 IPv4 和 IPv6（显示为 *:443 或 [::]:443），接管后也一样
+ss -ltn 2>/dev/null | awk '$4 ~ /^(\*|\[::\]):443$/' | grep -q . && V6=1
 H80="$(port_holder 80)"
 [ -z "$H80" ] || [ "$H80" = nginx ] || die "80 端口正在被 $H80 使用，没有做任何改动。请把这一行发给我。"
 systemctl is-active --quiet xray || die "xray 服务没有在运行（systemctl status xray 看看），没有做任何改动。"
@@ -256,42 +280,46 @@ done
 echo "Xray：Reality + $NETWORK，伪装域名 $SNAMES，转发目标 ${TARGET:-未写}"
 
 # ---------- 1. 安装软件 ----------
-say "安装 nginx、git、certbot"
+say "安装 nginx、HAProxy、certbot"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y </dev/null
-apt-get install -y nginx libnginx-mod-stream git curl ca-certificates certbot openssl </dev/null
-nginx -V 2>&1 | grep -q stream_ssl_preread || die "这台服务器的 nginx 不支持按域名分流（缺少 ssl_preread），Xray 没有改动。请把这一行发给我。"
+apt-get install -y --no-install-recommends nginx haproxy curl ca-certificates certbot openssl </dev/null \
+  || die "安装 nginx / HAProxy / certbot 失败（上面是错误信息）。Xray 没有改动，请把输出发给我。"
+command -v haproxy >/dev/null 2>&1 || die "HAProxy 没装上。Xray 没有改动，请把输出发给我。"
+if [ -f "$HACFG" ] && ! grep -qF "$HAMARK" "$HACFG"; then cp -p "$HACFG" "$HADIST"; fi
 systemctl enable nginx >/dev/null 2>&1 || true
 systemctl is-active --quiet nginx || systemctl start nginx
 
 # ---------- 2. 克隆仓库，每分钟同步 ----------
-say "从 GitHub 获取 $REPO（$BRANCH 分支）"
-if [ -d "$WEB/.git" ]; then
-  git -C "$WEB" remote set-url origin "https://github.com/$REPO.git"
-  git -C "$WEB" fetch -q --depth 1 origin "$BRANCH" </dev/null
-  git -C "$WEB" checkout -q -f -B "$BRANCH" FETCH_HEAD
-else
-  if [ -e "$WEB" ]; then mv "$WEB" "$WEB.bak.$(date +%Y%m%d%H%M%S)"; fi
-  mkdir -p "$(dirname "$WEB")"
-  git clone -q --depth 1 --branch "$BRANCH" "https://github.com/$REPO.git" "$WEB" </dev/null \
-    || die "克隆失败。请确认仓库 $REPO 存在而且是公开的。Xray 没有改动。"
-fi
-printf '{"repo":"%s","branch":"%s"}\n' "$REPO" "$BRANCH" >"$WEB/mirror.json"
-mkdir -p "$WEB/.git/info"
-grep -qx 'mirror.json' "$WEB/.git/info/exclude" 2>/dev/null || echo 'mirror.json' >>"$WEB/.git/info/exclude"
-
-cat >"/usr/local/bin/$NAME" <<EOF
-#!/bin/sh
-# 从 GitHub 拉取最新版本；有变化才更新网站文件。由定时任务每分钟运行一次，也可以手动运行。
-exec 9>/run/$NAME.lock
+say "从 GitHub 下载网页（$REPO 的 $BRANCH 分支）"
+# 同步脚本：不需要 git，只用 curl。先查 GitHub 上 $BRANCH 分支的最新提交，有变化才下载整份网页并替换
+{
+  printf '#!/bin/sh\n# 从 GitHub 同步网页（不需要 git）。由定时任务每分钟运行一次，也可以手动运行。\n'
+  printf 'REPO=%s\nBRANCH=%s\nWEB=%s\nLOCK=/run/%s.lock\n' "$REPO" "$BRANCH" "$WEB" "$NAME"
+  cat <<'SYNC'
+exec 9>"$LOCK"
 flock -n 9 || exit 0
-cd "$WEB" || exit 1
-timeout 50 git fetch -q --depth 1 origin "$BRANCH" </dev/null || exit 1
-if [ "\$(git rev-parse HEAD)" != "\$(git rev-parse FETCH_HEAD)" ]; then
-  git reset -q --hard FETCH_HEAD && echo "已同步到 \$(git log -1 --format='%h %s')"
+sha=$(curl -fsS --max-time 20 "https://github.com/$REPO.git/info/refs?service=git-upload-pack" | grep -a -o "[0-9a-f]\{40\} refs/heads/$BRANCH\$" | head -1 | cut -c1-40)
+[ -n "$sha" ] || { echo "查不到 GitHub 上的最新提交，稍后重试" >&2; exit 1; }
+[ -d "$WEB" ] && [ "$sha" = "$(cat "$WEB/.sha" 2>/dev/null)" ] && exit 0
+parent=$(dirname "$WEB"); mkdir -p "$parent"
+tmp=$(mktemp -d "$parent/.travel-footprints-new.XXXXXX") || exit 1
+if ! curl -fsSL --max-time 180 "https://codeload.github.com/$REPO/tar.gz/$sha" | tar -xz -C "$tmp" --strip-components=1 || [ ! -f "$tmp/index.html" ]; then
+  rm -rf "$tmp"; echo "下载失败，稍后重试" >&2; exit 1
 fi
-EOF
+[ -f "$WEB/mirror.json" ] && cp "$WEB/mirror.json" "$tmp/"
+echo "$sha" >"$tmp/.sha"
+chmod 755 "$tmp"
+rm -rf "$WEB.old"
+[ -d "$WEB" ] && mv "$WEB" "$WEB.old"
+mv "$tmp" "$WEB" && rm -rf "$WEB.old"
+echo "已同步到 $(echo "$sha" | cut -c1-7)"
+SYNC
+} >"/usr/local/bin/$NAME"
 chmod 755 "/usr/local/bin/$NAME"
+"/usr/local/bin/$NAME" || die "从 GitHub 下载网页失败。请确认仓库 $REPO 存在而且是公开的。Xray 没有改动。"
+# 告诉网页“这是镜像站”：足迹从本站同步的 footprints.json 读取，连接 GitHub 时自动填好仓库名
+printf '{"repo":"%s","branch":"%s"}\n' "$REPO" "$BRANCH" >"$WEB/mirror.json"
 cat >"/etc/systemd/system/$NAME.service" <<EOF
 [Unit]
 Description=Sync travel footprints site from GitHub
@@ -315,7 +343,6 @@ WantedBy=timers.target
 EOF
 systemctl daemon-reload
 systemctl enable --now "$NAME.timer" >/dev/null 2>&1
-systemctl start "$NAME.service" || warn "第一次同步没成功，稍后会自动重试。"
 
 # ---------- 3. 域名解析 ----------
 say "检查域名解析"
@@ -355,17 +382,18 @@ if [ "$MODE" = fresh ]; then
   XPORT="$(pick_port 4430 14430 24430)"
   SITE_PORT="$(pick_port 8443 18443 28443)"
 fi
-cp -p "$SITE_CONF" "$SITE_CONF.prev"; [ -f "$STREAM_CONF" ] && cp -p "$STREAM_CONF" "$STREAM_CONF.prev"
+cp -p "$SITE_CONF" "$SITE_CONF.prev"
+if [ -f "$HACFG" ]; then cp -p "$HACFG" "$HACFG.prev"; fi
 write_site_conf https
-write_stream_conf
-if ! nginx -t >/dev/null 2>&1; then
-  nginx -t || true
+write_haproxy_cfg
+if ! nginx -t >/dev/null 2>&1 || ! haproxy -c -q -f "$HACFG" >/dev/null 2>&1; then
+  nginx -t || true; haproxy -c -f "$HACFG" || true
   mv "$SITE_CONF.prev" "$SITE_CONF"
-  if [ -f "$STREAM_CONF.prev" ]; then mv "$STREAM_CONF.prev" "$STREAM_CONF"; else rm -f "$STREAM_CONF"; fi
+  if [ -f "$HACFG.prev" ]; then mv "$HACFG.prev" "$HACFG"; fi
   systemctl reload nginx || true
-  die "nginx 分流配置检查没通过（上面是错误信息），已经恢复刚才的配置，Xray 没有改动。"
+  die "分流配置检查没通过（上面是错误信息），已经恢复刚才的配置，Xray 没有改动。"
 fi
-rm -f "$SITE_CONF.prev" "$STREAM_CONF.prev"
+rm -f "$SITE_CONF.prev" "$HACFG.prev"
 [ "$MODE" = fresh ] && ORIG_LISTEN="$LISTEN"
 printf 'DOMAIN=%q\nNAMES=%q\nXPORT=%q\nSITE_PORT=%q\nSNI=%q\nORIG_LISTEN=%q\n' "$DOMAIN" "$NAMES" "$XPORT" "$SITE_PORT" "$SNI" "$ORIG_LISTEN" >"$STATE"
 
@@ -373,29 +401,33 @@ if [ "$MODE" = fresh ]; then
   BASE=0; reality_ok 443 && BASE=1
   [ "$BASE" = 1 ] || warn "切换前用 $SNI 握手也没有成功（可能是这台服务器连不上 Reality 的转发目标），切换后只检查端口。"
   cp -p "$XCONF" "$XBACKUP"
-  python3 "$PY" move "$XCONF" 443 "$XCONF.new" "$XPORT" >/dev/null
-  if ! xray_test "$XCONF.new"; then
-    rm -f "$XCONF.new" "$STREAM_CONF"; write_site_conf serve; systemctl reload nginx || true
+  python3 "$PY" move "$XCONF" 443 "$XNEW" "$XPORT" >/dev/null
+  if ! xray_test "$XNEW"; then
+    rm -f "$XNEW"; write_site_conf serve; systemctl reload nginx || true
+    if [ -f "$HADIST" ]; then cp -p "$HADIST" "$HACFG"; fi
     die "改好的 Xray 配置没通过检查。Xray 没有改动。"
   fi
 
   # ---------- 6. 切换（代理会断开一两秒，客户端会自动重连） ----------
-  say "切换：Xray 改到本机 $XPORT 端口，nginx 接管 443"
-  cat "$XCONF.new" >"$XCONF"; rm -f "$XCONF.new"
+  say "切换：Xray 改到本机 $XPORT 端口，HAProxy 接管 443"
+  cat "$XNEW" >"$XCONF"; rm -f "$XNEW"
+  systemctl enable haproxy >/dev/null 2>&1 || true
   systemctl restart xray
   wait_port 443 "" 10 || true
+  systemctl restart haproxy || true
+  wait_port 443 haproxy 10 || true
   systemctl reload nginx || true
-  wait_port 443 nginx 10 || true
   sleep 1
 else
   systemctl reload nginx
+  systemctl reload haproxy || systemctl restart haproxy
   sleep 1
 fi
 
 # ---------- 7. 检查 ----------
 say "检查网站和 Reality"
 OK=1
-[ "$(port_holder 443)" = nginx ] || { warn "nginx 没有接管 443 端口。"; OK=0; }
+[ "$(port_holder 443)" = haproxy ] || { warn "HAProxy 没有接管 443 端口。"; OK=0; }
 [ "$(port_holder "$XPORT")" = xray ] || { warn "Xray 没有在本机 $XPORT 端口运行。"; OK=0; }
 code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/" || true)"
 if [ "$code" = 200 ]; then echo "网站 https://$DOMAIN ：正常"; else warn "网站检查没通过（返回 $code）。"; OK=0; fi
@@ -410,7 +442,7 @@ if [ "$OK" != 1 ]; then
       rm -f "$STATE"
       die "已恢复原样：Xray 照常监听 443，代理不受影响。网站暂时用 http://$DOMAIN 访问。请把上面的输出发给我。"
     fi
-    die "自动恢复也没成功。请手动运行：cp $XBACKUP $XCONF && systemctl restart nginx && systemctl restart xray"
+    die "自动恢复也没成功。请手动运行：systemctl stop haproxy && cp $XBACKUP $XCONF && systemctl restart xray"
   fi
   die "重新运行后检查没通过。可以用 bash $0 --undo 恢复原样，并把上面的输出发给我。"
 fi
@@ -420,7 +452,7 @@ cat <<EOF
 网址：https://$DOMAIN
 网站文件：$WEB（每分钟从 github.com/$REPO 的 $BRANCH 分支同步）
 立即同步：$NAME        同步记录：journalctl -u $NAME -n 20
-443 分流配置：$STREAM_CONF
+443 分流配置：$HACFG（HAProxy）
 Xray 现在监听 127.0.0.1:$XPORT，原配置备份在 $XBACKUP
 代理客户端不用改。想恢复原样：bash $0 --undo
 EOF

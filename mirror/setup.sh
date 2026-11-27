@@ -8,7 +8,7 @@
 #   curl -fsSLo setup.sh https://raw.githubusercontent.com/Yexika/travel-footprints/main/mirror/setup.sh
 #   bash setup.sh 你的域名 [GitHub 仓库，默认 Yexika/travel-footprints] [分支，默认 main]
 #
-# 它会：安装 nginx、git、certbot → 把仓库克隆到 /var/www/travel-footprints → 设置每分钟同步
+# 它会：安装 nginx、certbot → 把网页下载到 /var/www/travel-footprints → 设置每分钟同步
 #      → 配置 gzip 压缩和缓存 → 申请免费 HTTPS 证书（Let's Encrypt，自动续期）。
 # 重复运行是安全的：会更新配置，已有的证书会保留。服务器上不需要 GitHub 令牌。
 set -euo pipefail
@@ -55,54 +55,53 @@ if command -v nginx >/dev/null 2>&1 && nginx -T 2>/dev/null | grep -Eq '^[[:spac
 fi
 
 # ---------- 1. 安装软件 ----------
-say "安装 nginx、git、certbot"
+say "安装 nginx、certbot"
 if command -v apt-get >/dev/null 2>&1; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y </dev/null
-  apt-get install -y nginx git curl ca-certificates </dev/null
-  apt-get install -y certbot python3-certbot-nginx </dev/null || warn "certbot 没装上，先只开 HTTP。"
+  apt-get install -y --no-install-recommends nginx curl ca-certificates </dev/null
+  apt-get install -y --no-install-recommends certbot python3-certbot-nginx </dev/null || warn "certbot 没装上，先只开 HTTP。"
 elif command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then
   PM="$(command -v dnf || command -v yum)"
   "$PM" install -y epel-release </dev/null || true
-  "$PM" install -y nginx git curl ca-certificates </dev/null
+  "$PM" install -y nginx curl ca-certificates tar gzip </dev/null
   "$PM" install -y certbot python3-certbot-nginx </dev/null || warn "certbot 没装上，先只开 HTTP。"
 else
   die "没认出系统的软件包管理器。支持 Ubuntu、Debian、CentOS、Rocky、AlmaLinux 等。"
 fi
 command -v flock >/dev/null 2>&1 || die "缺少 flock 命令（通常在 util-linux 包里）。"
 
-# ---------- 2. 克隆仓库 ----------
-say "从 GitHub 获取 $REPO（$BRANCH 分支）"
-if [ -d "$WEB/.git" ]; then
-  git -C "$WEB" remote set-url origin "https://github.com/$REPO.git"
-  git -C "$WEB" fetch -q --depth 1 origin "$BRANCH" </dev/null
-  git -C "$WEB" checkout -q -f -B "$BRANCH" FETCH_HEAD
-else
-  if [ -e "$WEB" ]; then mv "$WEB" "$WEB.bak.$(date +%Y%m%d%H%M%S)"; fi
-  mkdir -p "$(dirname "$WEB")"
-  git clone -q --depth 1 --branch "$BRANCH" "https://github.com/$REPO.git" "$WEB" </dev/null \
-    || die "克隆失败。请确认仓库 $REPO 存在而且是公开的。"
+# ---------- 2. 下载网页，设置每分钟同步 ----------
+say "从 GitHub 下载网页（$REPO 的 $BRANCH 分支）"
+# 同步脚本：不需要 git，只用 curl。先查 GitHub 上 $BRANCH 分支的最新提交，有变化才下载整份网页并替换
+{
+  printf '#!/bin/sh\n# 从 GitHub 同步网页（不需要 git）。由定时任务每分钟运行一次，也可以手动运行。\n'
+  printf 'REPO=%s\nBRANCH=%s\nWEB=%s\nLOCK=/run/%s.lock\n' "$REPO" "$BRANCH" "$WEB" "$NAME"
+  cat <<'SYNC'
+exec 9>"$LOCK"
+flock -n 9 || exit 0
+sha=$(curl -fsS --max-time 20 "https://github.com/$REPO.git/info/refs?service=git-upload-pack" | grep -a -o "[0-9a-f]\{40\} refs/heads/$BRANCH\$" | head -1 | cut -c1-40)
+[ -n "$sha" ] || { echo "查不到 GitHub 上的最新提交，稍后重试" >&2; exit 1; }
+[ -d "$WEB" ] && [ "$sha" = "$(cat "$WEB/.sha" 2>/dev/null)" ] && exit 0
+parent=$(dirname "$WEB"); mkdir -p "$parent"
+tmp=$(mktemp -d "$parent/.travel-footprints-new.XXXXXX") || exit 1
+if ! curl -fsSL --max-time 180 "https://codeload.github.com/$REPO/tar.gz/$sha" | tar -xz -C "$tmp" --strip-components=1 || [ ! -f "$tmp/index.html" ]; then
+  rm -rf "$tmp"; echo "下载失败，稍后重试" >&2; exit 1
 fi
+[ -f "$WEB/mirror.json" ] && cp "$WEB/mirror.json" "$tmp/"
+echo "$sha" >"$tmp/.sha"
+chmod 755 "$tmp"
+rm -rf "$WEB.old"
+[ -d "$WEB" ] && mv "$WEB" "$WEB.old"
+mv "$tmp" "$WEB" && rm -rf "$WEB.old"
+echo "已同步到 $(echo "$sha" | cut -c1-7)"
+SYNC
+} >"/usr/local/bin/$NAME"
+chmod 755 "/usr/local/bin/$NAME"
+"/usr/local/bin/$NAME" || die "从 GitHub 下载网页失败。请确认仓库 $REPO 存在而且是公开的。"
 # 告诉网页“这是镜像站”：足迹从本站同步的 footprints.json 读取，连接 GitHub 时自动填好仓库名
 printf '{"repo":"%s","branch":"%s"}\n' "$REPO" "$BRANCH" >"$WEB/mirror.json"
-mkdir -p "$WEB/.git/info"
-grep -qx 'mirror.json' "$WEB/.git/info/exclude" 2>/dev/null || echo 'mirror.json' >>"$WEB/.git/info/exclude"
 if command -v restorecon >/dev/null 2>&1; then restorecon -R "$WEB" || true; fi
-
-# ---------- 3. 每分钟同步 ----------
-say "设置每分钟从 GitHub 同步"
-cat >"/usr/local/bin/$NAME" <<EOF
-#!/bin/sh
-# 从 GitHub 拉取最新版本；有变化才更新网站文件。由定时任务每分钟运行一次，也可以手动运行。
-exec 9>/run/$NAME.lock
-flock -n 9 || exit 0
-cd "$WEB" || exit 1
-timeout 50 git fetch -q --depth 1 origin "$BRANCH" </dev/null || exit 1
-if [ "\$(git rev-parse HEAD)" != "\$(git rev-parse FETCH_HEAD)" ]; then
-  git reset -q --hard FETCH_HEAD && echo "已同步到 \$(git log -1 --format='%h %s')"
-fi
-EOF
-chmod 755 "/usr/local/bin/$NAME"
 
 if [ -d /run/systemd/system ]; then
   cat >"/etc/systemd/system/$NAME.service" <<EOF
@@ -129,11 +128,9 @@ EOF
   rm -f "/etc/cron.d/$NAME"
   systemctl daemon-reload
   systemctl enable --now "$NAME.timer" >/dev/null
-  systemctl start "$NAME.service" || warn "第一次同步没成功，稍后会自动重试。"
   LOGCMD="journalctl -u $NAME -n 20"
 else
   echo "* * * * * root /usr/local/bin/$NAME >/dev/null 2>&1" >"/etc/cron.d/$NAME"
-  "/usr/local/bin/$NAME" || warn "第一次同步没成功，稍后会自动重试。"
   LOGCMD="手动运行 $NAME 看输出"
 fi
 
@@ -159,6 +156,7 @@ fi
 
 # ---------- 5. nginx ----------
 say "配置 nginx"
+mkdir -p /etc/nginx/travel-footprints.d   # 附加配置（比如 setup-api.sh 的 /api/ 转发）放在这里
 V6=""
 if [ -f /proc/net/if_inet6 ]; then V6="    listen [::]:80;"; fi
 cat >"$CONF" <<EOF
@@ -168,6 +166,7 @@ server {
 $V6
     server_name $NAMES;
     root $WEB;
+    include /etc/nginx/travel-footprints.d/*.conf;
     index index.html;
     charset utf-8;
 

@@ -31,6 +31,12 @@ code{font-size:.92em;background:var(--chip);padding:1px 5px;border-radius:4px;ov
 .top{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:20px 40px;align-items:end;padding-bottom:18px}
 h1{font-size:clamp(32px,4.4vw,48px);line-height:1.05;margin:0;font-weight:900;text-wrap:balance}
 .ttl p{margin:10px 0 0;color:var(--mut);max-width:34em}
+.ttl .sites{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;font-size:14px;max-width:none}
+.sites>span{color:var(--mut)}
+.sites a{display:inline-flex;align-items:baseline;gap:6px;min-height:36px;padding:6px 12px;border:1px solid var(--line);border-radius:999px;background:var(--card);color:var(--ink);text-decoration:none;font-weight:600}
+.sites a small{font-weight:400;color:var(--mut)}
+.sites a[aria-current=page]{border-color:var(--beenbd);background:var(--beenbg)}
+.sites a:hover{border-color:var(--ink)}
 .stats{display:flex;flex-wrap:wrap;gap:12px 30px}
 .st{display:grid;gap:3px;align-content:end}
 .st b{font:800 clamp(30px,3.4vw,44px)/1 var(--num);font-variant-numeric:tabular-nums;white-space:nowrap}
@@ -196,8 +202,10 @@ svg[data-mode=been] .c,svg[data-mode=want] .c{cursor:cell}
 .syncbox{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;flex:1 1 320px}
 .sync{margin:0}
 .sync::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--mut);margin-right:8px;vertical-align:1px}
-.sync[data-s=ok]::before,.sync[data-s=gh-ok]::before{background:var(--want)}
-.sync[data-s=err]::before,.sync[data-s=slow]::before,.sync[data-s=gh-auth]::before{background:var(--been)}
+.sync[data-s=ok]::before,.sync[data-s=gh-ok]::before,.sync[data-s=api-ok]::before{background:var(--want)}
+.sync[data-s=err]::before,.sync[data-s=slow]::before,.sync[data-s=gh-auth]::before,.sync[data-s=api-err]::before,.sync[data-s=api-auth]::before{background:var(--been)}
+.btn.login{font-weight:700;border-color:var(--ink);margin-right:auto}
+.btn.login.on{font-weight:500;border-color:var(--line)}
 .about{flex-basis:100%;margin:4px 0 0;font-size:14px;color:var(--mut)}
 .about a{color:var(--ink)}
 .bk{flex:0 1 460px}

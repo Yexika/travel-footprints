@@ -1,0 +1,7 @@
+{
+  "api": "https://jzsm734.top/api",
+  "sites": [
+    { "name": "GitHub Pages", "desc": "国外访问更快", "url": "https://yexika.github.io/travel-footprints/" },
+    { "name": "国内镜像", "desc": "国内访问更快", "url": "https://jzsm734.top/" }
+  ]
+}
