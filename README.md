@@ -39,7 +39,7 @@
 ## 部署步骤（从压缩包上传）
 
 1. **新建仓库**：GitHub 右上角「+」→ New repository，选 **Public**，然后 Create repository。
-2. **上传文件**：在新仓库页面点 **uploading an existing file**，把文件夹里的**全部内容**（`index.html`、`app.js`、`style.css`、`footprints.json`、`README.md`，以及 `data`、`docs` 两个文件夹）一起拖进去，再点 Commit changes。
+2. **上传文件**：在新仓库页面点 **uploading an existing file**，把文件夹里的**全部内容**（`index.html`、`app.js`、`style.css`、`footprints.json`、`README.md`，以及 `data`、`lib`、`fonts`、`mirror`、`docs` 这几个文件夹）一起拖进去，再点 Commit changes。
 3. **打开 Pages**：Settings → Pages → Source 选 **Deploy from a branch**，Branch 选 **main**、文件夹选 **/(root)**，点 Save。
 
 ## 让标记保存到仓库
@@ -61,6 +61,27 @@ GitHub Pages 只能放静态文件，网页需要一个「钥匙」，才能把�
 
 不连 GitHub 也能用：标记会存在当前浏览器里，但换浏览器或清缓存后会丢。页面底部的「备份与恢复」可以随时把全部标记复制成一段文字保存。
 
+## 国内镜像（放到自己的服务器上）
+
+GitHub Pages 在国内打开比较慢。有自己的服务器和域名的话，可以再放一份镜像，服务器每分钟从 GitHub 同步一次：
+
+1. 把域名解析到服务器的 IP，并在服务器商控制台的安全组里放行 TCP 80 和 443 端口。
+2. 用 root 登录服务器，运行（最后换成你的域名；仓库不是 Yexika/travel-footprints 的话，在域名后面再写上 `用户名/仓库名`）：
+
+   ```bash
+   curl -fsSLo setup.sh https://raw.githubusercontent.com/Yexika/travel-footprints/main/mirror/setup.sh
+   bash setup.sh 你的域名
+   ```
+
+脚本会装好 nginx，把仓库克隆到 `/var/www/travel-footprints`，设置每分钟同步，开启 gzip 压缩，并申请免费的 HTTPS 证书。服务器上不需要 GitHub 令牌。
+
+**服务器的 443 端口已经被 Xray Reality 使用时**，改用 `setup-reality.sh`（用法相同，把上面命令里的 `setup.sh` 换成 `setup-reality.sh`）。它让 nginx 接管 443 端口，只看连接里的域名来分流：访问网站域名的交给网站，其余连接原样转给 Xray（改为只在本机监听），代理客户端不用改。改 Xray 之前会备份，切换后自动检查网站和 Reality，不通过就自动恢复原样；`bash setup-reality.sh --undo` 可以随时撤销。
+
+- 无论在 GitHub Pages 还是在镜像站上标记，足迹都保存到 GitHub，镜像站一分钟内就会同步到。
+- 镜像站的访客直接读服务器上的 `footprints.json`，不经过 GitHub，所以国内打开更快。
+- 在镜像站上编辑需要再点一次「连接 GitHub」，因为令牌是按网址分别保存在浏览器里的。
+- 以后网页更新，只要上传到 GitHub，镜像站会自动跟着更新。
+
 ## 文件说明
 
 | 文件 | 作用 |
@@ -73,6 +94,10 @@ GitHub Pages 只能放静态文件，网页需要一个「钥匙」，才能把�
 | `data/names.json` | 省、市名称 |
 | `data/centers.json` | 各省、市政府所在地坐标（插旗位置） |
 | `data/spots.json` | 景点清单 |
+| `lib/` | 地图组件 D3 和 topojson-client（放在仓库里，不依赖国外 CDN） |
+| `fonts/` | 数字用的 Archivo 字体（中文用系统自带字体） |
+| `mirror/setup.sh` | 在自己服务器上部署国内镜像的脚本 |
+| `mirror/setup-reality.sh` | 同上，用于 443 端口已经被 Xray Reality 使用的服务器 |
 | `docs/` | README 里的截图 |
 | `CHANGELOG.md` | 更新日志（每个版本改了什么） |
 
@@ -109,4 +134,5 @@ python3 -m http.server 8000
 - 中国省、市边界：阿里云 DataV.GeoAtlas（经 [GeoMapData_CN](https://github.com/lyhmyd1211/GeoMapData_CN) 整理，2022 年版），已简化。
 - 5A 名单依据文化和旅游部历次公告整理（截至 2026 年 11 月：358 家已确定，17 家公示中）。一个 5A 景区包含多处景点时（如苏州园林），清单里会分开列出。
 - 景点坐标是人工整理的大致位置，用来在地图上打点，不适合导航。
-- 绘图：[D3](https://d3js.org)、[topojson-client](https://github.com/topojson/topojson-client)。
+- 绘图：[D3](https://d3js.org)、[topojson-client](https://github.com/topojson/topojson-client)（ISC 许可，见 `lib/`）。
+- 数字字体：[Archivo](https://github.com/Omnibus-Type/Archivo)（SIL Open Font License，见 `fonts/OFL.txt`）。

@@ -1,8 +1,10 @@
 /* VOICE: 私人旅行手账，轻快、带点小骄傲，像贴在墙上的刮刮乐地图
    IDEA: 打卡地图——去过的地方涂成朱红，想去的先用钴蓝斜纹占个位；世界 → 中国 → 省三级下钻
    PICTURE: 占满首屏的地图，国家、省、市、景点都能点、能涂
-   COLOUR and TYPE: 纸白底、海青色海洋、朱红=去过、钴蓝斜纹=想去；Noto Sans SC + Archivo 数字
+   COLOUR and TYPE: 纸白底、海青色海洋、朱红=去过、钴蓝斜纹=想去；系统中文字体 + Archivo 数字（字体放在 fonts/，不依赖 Google Fonts）
    LAYOUT: 标题与统计 → 路径导航与工具条 → 通栏地图 → 景点清单与足迹清单 → 页脚同步与备份 */
+@font-face{font-family:"Archivo";font-style:normal;font-weight:600;font-display:swap;src:url(fonts/archivo-latin-600-normal.woff2) format("woff2");unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:"Archivo";font-style:normal;font-weight:800;font-display:swap;src:url(fonts/archivo-latin-800-normal.woff2) format("woff2");unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
 :root{color-scheme:light dark;
 --bg:light-dark(#fbfaf7,#0c1719);--ink:light-dark(#17201e,#eaf0ed);--mut:light-dark(#5b6764,#9aaca8);--line:light-dark(#e3dfd5,#22373a);
 --sea:light-dark(#bfdfd8,#11393f);--grat:light-dark(rgba(255,255,255,.65),rgba(255,255,255,.07));
@@ -12,7 +14,7 @@
 --beenfill:light-dark(#f6d47a,#d8ae45);--beenlbl:light-dark(#5a4000,#2b1f00);--flag:light-dark(#d6281b,#ff4b37);--flagpole:light-dark(#3a2a26,#f3ead8);
 --want:light-dark(#2456c8,#8db0ff);--wantbg:light-dark(#dde6fb,#1f3357);--on:light-dark(#fff,#0c1719);
 --card:light-dark(#fff,#13252a);--chip:light-dark(#efece3,#182c2f);
---f:"Noto Sans SC",system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;--num:"Archivo",var(--f)}
+--f:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Source Han Sans SC","Noto Sans CJK SC",system-ui,-apple-system,sans-serif;--num:"Archivo",var(--f)}
 :root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
 *{box-sizing:border-box;min-width:0}
 [hidden]{display:none!important}

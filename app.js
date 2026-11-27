@@ -162,8 +162,14 @@ function qFail(c){
 // GitHub：把整份足迹写进仓库里的 footprints.json（停手 1.5 秒后合并成一次提交）
 const GH={cfg:null,sha:null,timer:0,busy:false,again:false,retry:0};
 function ghReadCfg(){try{const c=JSON.parse(localStorage.getItem(LSG)||'null');return c&&c.repo&&c.token?c:null;}catch(e){return null;}}
+// 镜像站（比如自己服务器上的国内镜像）：同步脚本会在网站根目录写一个 mirror.json，里面是 {"repo":"用户名/仓库名","branch":"main"}
+let MIRROR=null;
+async function loadMirror(){
+  if(/\.github\.io$/i.test(location.hostname))return;
+  try{const m=await getJSON('mirror.json?t='+Date.now());if(m&&/^[\w.-]+\/[\w.-]+$/.test(m.repo||''))MIRROR={repo:m.repo,branch:m.branch||'main'};}catch(e){}
+}
 function ghGuess(){
-  const m=/^([a-z0-9-]+)\.github\.io$/i.exec(location.hostname);if(!m)return '';
+  const m=/^([a-z0-9-]+)\.github\.io$/i.exec(location.hostname);if(!m)return MIRROR?MIRROR.repo:'';
   const seg=location.pathname.split('/').filter(Boolean)[0];
   return m[1]+'/'+(seg&&!/\.html?$/i.test(seg)?seg:m[1]+'.github.io');
 }
@@ -791,7 +797,7 @@ const dlg=$('#ghDlg');
 function updGhBtn(){const b=$('#ghBtn');b.hidden=envClaude;b.textContent=backend==='github'?'GitHub 设置':'连接 GitHub';}
 $('#ghBtn').addEventListener('click',()=>{
   const c=GH.cfg||ghReadCfg();
-  $('#ghRepo').value=(c&&c.repo)||ghGuess();$('#ghBranch').value=(c&&c.branch)||'main';
+  $('#ghRepo').value=(c&&c.repo)||ghGuess();$('#ghBranch').value=(c&&c.branch)||(MIRROR&&MIRROR.branch)||'main';
   $('#ghToken').value='';$('#ghToken').placeholder=c?'已连接；粘贴新令牌可以更换':'github_pat_…';
   $('#ghOff').hidden=!c;$('#ghErr').hidden=true;dlg.hidden=false;
   ($('#ghRepo').value?$('#ghToken'):$('#ghRepo')).focus();
@@ -831,6 +837,7 @@ async function initStorage(){
     },()=>{gp=true;done();setSync('err');});
     return;
   }
+  await loadMirror();
   updGhBtn();
   const repo=ghGuess();
   if(repo){const ab=$('#about');ab.innerHTML=`这是一张旅行足迹地图，金色和小红旗是去过的地方，蓝色斜纹是想去的地方。网页代码在 <a href="https://github.com/${esc(repo)}">github.com/${esc(repo)}</a>，你也可以复制一份，做自己的足迹地图。`;ab.hidden=false;}
@@ -846,7 +853,8 @@ async function initStorage(){
   // 没连 GitHub：如果仓库里已经发布了足迹，就以只读方式展示；否则在本机编辑
   let pub=null;
   const guess=ghGuess();
-  if(guess){try{pub=(await ghGet({repo:guess,branch:'main'})).data;}catch(e){}}
+  // GitHub Pages 上直接读仓库（最新）；镜像站读自己同步下来的 footprints.json（国内更快，最多晚一分钟）
+  if(guess&&!MIRROR){try{pub=(await ghGet({repo:guess,branch:'main'})).data;}catch(e){}}
   if(!pub){try{pub=await getJSON('footprints.json?t='+Date.now());}catch(e){}}
   const pm=normMarks(pub&&pub.marks),pp=normPins(pub&&pub.pins);
   if(Object.keys(pm).length||Object.keys(pp).length){
