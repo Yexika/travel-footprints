@@ -17,7 +17,7 @@
 <header class="wrap band top">
   <div class="ttl">
     <h1>我的世界足迹</h1>
-    <p>去过的地方涂上朱红，想去的地方先用蓝色斜纹占个位。点中国进入省份，点省份看城市和景点。</p>
+    <p>去过的地方涂成金色、插上小红旗，想去的地方先用蓝色斜纹占个位。点中国进入省份，点省份看城市和景点。</p>
   </div>
   <div class="stats" id="stats"></div>
 </header>
@@ -31,7 +31,7 @@
   <div class="tools">
     <div class="modes" role="group" aria-label="操作方式">
       <button data-m="view" aria-pressed="true"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 1.5l10 6-4.3 1.1 2.6 5-2 1-2.6-5L3 12.6z" fill="currentColor"/></svg>查看</button>
-      <button data-m="been" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2" width="12" height="12" rx="3" style="fill:var(--been)"/></svg>涂·去过</button>
+      <button data-m="been" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" rx="3" style="fill:var(--beenfill);stroke:var(--beenbd)"/></svg>涂·去过</button>
       <button data-m="want" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" rx="3" style="fill:var(--wantbg);stroke:var(--want)"/><path d="M4 9.5l5.5-5.5M5.5 12.5l7-7" style="stroke:var(--want);stroke-width:1.8"/></svg>涂·想去</button>
       <button data-m="pin" aria-pressed="false"><svg viewBox="-9 -23 18 24" aria-hidden="true"><path d="M0 0C-1.5-4.5-8-8.2-8-13.5a8 8 0 1 1 16 0C8-8.2 1.5-4.5 0 0Z" fill="currentColor"/></svg>放地点</button>
     </div>
@@ -54,6 +54,7 @@
       <span><i class="sw been"></i>去过</span>
       <span><i class="sw want"></i>想去</span>
       <span class="lg-spot"><i class="sw spot"></i>景点</span>
+      <span class="lg-flag"><svg class="sw flagi" viewBox="-3 -22 18 24"><path d="M-0.9 0V-20h1.8V0Z" style="fill:var(--flagpole)"/><path d="M1-20C4.5-21.6 8-18.4 13-20V-11.6C8-10 4.5-13.2 1-11.6Z" style="fill:var(--flag)"/><circle r="2.4" style="fill:var(--flagpole)"/></svg>插旗＝去过</span>
       <span><svg class="sw pin" viewBox="-9 -23 18 24"><path d="M0 0C-1.5-4.5-8-8.2-8-13.5a8 8 0 1 1 16 0C8-8.2 1.5-4.5 0 0Z" style="fill:var(--ink)"/></svg>地点</span>
     </div>
     <div class="zoom">

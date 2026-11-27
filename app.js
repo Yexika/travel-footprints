@@ -13,13 +13,15 @@ const ORDER=['AS','EU','AF','NA','SA','OC','AN'];
 const SN={been:'去过',want:'想去'};
 const W2CN={TW:'710000',HK:'810000',MO:'820000'};
 const PIN='M0 0C-1.5-4.5-8-8.2-8-13.5a8 8 0 1 1 16 0C8-8.2 1.5-4.5 0 0Z';
+// 小红旗：旗杆底部在 (0,0)
+const FLAG_POLE='M-0.9 0V-20h1.8V0Z',FLAG_CLOTH='M1-20C4.5-21.6 8-18.4 13-20V-11.6C8-10 4.5-13.2 1-11.6Z';
 const LS='worldmap.v2',LS1='worldmap.v1',LSG='worldmap.gh';
 const CN_BOX={type:'MultiPoint',coordinates:[[73.5,39.4],[135.1,48.4],[123.3,53.6],[109.6,18.1],[97.3,28.2],[87.5,49.2]]};
 const INSET_PROV=['440000','450000','460000','710000','350000','810000','820000'];
 const HINTS={
   world:{view:'点国家查看或标记，点中国进入省份地图；拖动平移，滚轮或双指缩放。',been:'涂色模式：点一下国家就标为「去过」，再点一下取消。',want:'涂色模式：点一下国家就标为「想去」，再点一下取消。',pin:'点地图上任意位置放一个地点，城市、海岛、雪山都行。'},
-  china:{view:'点省份进入局部图，看城市和景点。',been:'涂色模式：点一下省份就标为「去过」，再点一下取消。',want:'涂色模式：点一下省份就标为「想去」，再点一下取消。',pin:'点地图上任意位置放一个地点。'},
-  prov:{view:'点城市或景点（圆点）查看和标记；下面有这个省的景点清单。',been:'涂色模式：点城市或景点就标为「去过」，再点一下取消。',want:'涂色模式：点城市或景点就标为「想去」，再点一下取消。',pin:'点地图上任意位置放一个自己的地点，比如一家店、一条徒步线。'}
+  china:{view:'点省份进入局部图；去过的城市会插上小红旗，点小红旗可以直接打开那个城市。',been:'涂色模式：点一下省份就标为「去过」，再点一下取消。',want:'涂色模式：点一下省份就标为「想去」，再点一下取消。',pin:'点地图上任意位置放一个地点。'},
+  prov:{view:'点城市或景点（圆点）查看和标记，去过的景点会插上小红旗；下面有这个省的景点清单。',been:'涂色模式：点城市或景点就标为「去过」，再点一下取消。',want:'涂色模式：点城市或景点就标为「想去」，再点一下取消。',pin:'点地图上任意位置放一个自己的地点，比如一家店、一条徒步线。'}
 };
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const str=(v,n)=>typeof v==='string'?v.slice(0,n):'';
@@ -40,7 +42,7 @@ const b64dec=s=>new TextDecoder().decode(Uint8Array.from(atob((s||'').replace(/\
 
 /* ---------- 状态 ---------- */
 const fig=$('#fig'),cardEl=$('#card'),tip=$('#tip'),syncEl=$('#sync');
-let NAMES={},SPOTS=[],SPOT={},WORLD=null,CHINA=null;const PROV={};
+let NAMES={},CENTERS={},SPOTS=[],SPOT={},WORLD=null,CHINA=null;const PROV={};
 let view='world',prov=null,curFeats=[],AREA={};
 let marks={},pins={},D={};
 let mode='view',backend='init',ro=false,db=null,envClaude=false;
@@ -49,7 +51,7 @@ let sel=null,W=0,H=0,K=1,T=d3.zoomIdentity,TE=[[0,0],[1,1]],lastPt=null,undoFn=n
 /* ---------- 地图骨架 ---------- */
 const svg=d3.select('#map');
 const root=svg.append('g');
-const gBg=root.append('g'),gC=root.append('g'),gDot=root.append('g'),gSpot=root.append('g'),gLbl=root.append('g'),gPin=root.append('g');
+const gBg=root.append('g'),gC=root.append('g'),gDot=root.append('g'),gLbl=root.append('g'),gSpot=root.append('g'),gFlag=root.append('g'),gPin=root.append('g');
 const gIns=svg.append('g').attr('class','ins');
 let proj=d3.geoEqualEarth();
 const path=d3.geoPath(proj);
@@ -70,8 +72,8 @@ function prep(f,key,name,sub){
   f.main=main;f.ga=d3.geoArea(f);return f;
 }
 async function loadBase(){
-  const [w,c,n,s]=await Promise.all([getJSON('data/world.json'),getJSON('data/china.json'),getJSON('data/names.json'),getJSON('data/spots.json')]);
-  NAMES=n;
+  const [w,c,n,s,ct]=await Promise.all([getJSON('data/world.json'),getJSON('data/china.json'),getJSON('data/names.json'),getJSON('data/spots.json'),getJSON('data/centers.json').catch(()=>({}))]);
+  NAMES=n;CENTERS=ct||{};
   SPOTS=s.filter(x=>x&&x.id&&x.n&&isFinite(x.lon)&&isFinite(x.lat));
   for(const x of SPOTS)SPOT[x.id]=x;
   const pf=topojson.feature(c,c.objects.prov).features.map(f=>{prep(f,f.properties.a,short(f.properties.n),f.properties.n);f.drill='#p-'+f.key;return f;});
@@ -311,14 +313,15 @@ function buildLabels(){
   LBL=[];
   if(view!=='world'){
     for(const f of curFeats){if(!f.cen||!isFinite(f.cen[0]))continue;LBL.push({id:'a'+f.key,key:f.key,x:f.cen[0],y:f.cen[1]+4,t:f.name,cls:'a',pri:f.a,w:f.name.length*13+6,h:16});}
-    if(view==='prov')for(const s of SPOTS){if(s.p!==prov)continue;const p=proj([s.lon,s.lat]);if(!p)continue;LBL.push({id:s.id,x:p[0],y:p[1]+4,dx:10,t:s.n,cls:'s',pri:1e12,w:s.n.length*13+6,h:16,st:true});}
+    if(view==='prov')for(const s of SPOTS){if(s.p!==prov)continue;const p=proj([s.lon,s.lat]);if(!p)continue;LBL.push({id:s.id,x:p[0],y:p[1]+4,dx:14,t:s.n,cls:'s',pri:1e12,w:s.n.length*13+6,h:16,st:true});}
   }
   gLbl.selectAll('text').data(LBL,d=>d.id).join('text').attr('class',d=>'lbl '+d.cls).attr('x',d=>d.dx||0).text(d=>d.t);
 }
 function placeLabels(){
   if(!LBL.length)return;
   const placed=[],vis=new Set();
-  if(view==='prov')for(const s of SPOTS){if(s.p!==prov)continue;const p=proj([s.lon,s.lat]);if(!p)continue;const q=T.apply(p);placed.push([q[0]-7,q[1]-7,q[0]+7,q[1]+7]);}
+  if(view==='prov')for(const s of SPOTS){if(s.p!==prov)continue;const p=proj([s.lon,s.lat]);if(!p)continue;const q=T.apply(p);placed.push(marks[s.id]&&marks[s.id].s==='been'?[q[0]-3,q[1]-24,q[0]+11,q[1]+3]:[q[0]-7,q[1]-7,q[0]+7,q[1]+7]);}
+  for(const d of FLAGS){const q=T.apply(d._p);placed.push([q[0]-3,q[1]-22,q[0]+15,q[1]+2]);}
   for(const d of LBL.slice().sort((a,b)=>b.pri-a.pri)){
     const q=T.apply([d.x,d.y]);
     const x0=d.st?q[0]+(d.dx||0):q[0]-d.w/2,y0=q[1]-d.h+3,box=[x0,y0,x0+d.w,y0+d.h];
@@ -334,8 +337,8 @@ function pinT(d){const p=proj([d.lon,d.lat])||[0,0];return `translate(${p[0]},${
 function scaleDeps(){
   d3.select('#hatch').attr('patternTransform',`rotate(45) scale(${1/K})`);
   gDot.selectAll('circle').attr('r',4.5/K);
-  const ss=view==='prov'?1:0.7;
-  gSpot.selectAll('g.spot').attr('transform',d=>`translate(${d._p[0]},${d._p[1]}) scale(${ss/K})`);
+  gSpot.selectAll('g.spot').attr('transform',d=>`translate(${d._p[0]},${d._p[1]}) scale(${1/K})`);
+  gFlag.selectAll('g.flag').attr('transform',d=>`translate(${d._p[0]},${d._p[1]}) scale(${1/K})`);
   gPin.selectAll('g.pin').attr('transform',pinT);
   gPin.classed('plbl',K>=2.5||view==='prov');
   gLbl.selectAll('text').attr('transform',d=>`translate(${d.x},${d.y}) scale(${1/K})`);
@@ -346,11 +349,15 @@ function renderMap(){
   gIns.selectAll('path.c').attr('class',cls);
   const small=view==='world'?curFeats.filter(f=>D[f.key]&&f.a<60):[];
   gDot.selectAll('circle').data(small,f=>f.key).join('circle').attr('class',f=>'dot '+D[f.key]).attr('cx',f=>f.cen[0]).attr('cy',f=>f.cen[1]);
-  const sp=view==='prov'?SPOTS.filter(s=>s.p===prov):view==='china'?SPOTS.filter(s=>marks[s.id]):[];
+  const sp=view==='prov'?SPOTS.filter(s=>s.p===prov):[];
   for(const s of sp)s._p=proj([s.lon,s.lat])||[0,0];
-  gSpot.selectAll('g.spot').data(sp,d=>d.id).join(en=>{const g=en.append('g');g.append('circle').attr('class','hit').attr('r',14);g.append('circle').attr('class','r').attr('r',6.5);g.append('circle').attr('class','d').attr('r',2.2);return g;})
+  gSpot.selectAll('g.spot').data(sp,d=>d.id).join(en=>{const g=en.append('g');g.append('circle').attr('class','hit').attr('r',14);g.append('circle').attr('class','r').attr('r',6.5);g.append('circle').attr('class','d').attr('r',2.2);flagInto(g);return g;})
     .attr('class',d=>'spot'+(marks[d.id]?' '+marks[d.id].s:'')+(sel&&sel.t==='s'&&sel.id===d.id?' sel':'')).attr('data-id',d=>d.id);
-  gSpot.selectAll('g.spot.sel').raise();
+  gSpot.selectAll('g.spot.sel').raise();gSpot.selectAll('g.spot.been').raise();
+  FLAGS=view==='china'?cityFlags():[];
+  for(const d of FLAGS)d._p=proj([d.lon,d.lat])||[0,0];
+  gFlag.selectAll('g.flag').data(FLAGS,d=>d.id).join(en=>{const g=en.append('g').attr('class','flag');g.append('rect').attr('class','hit').attr('x',-6).attr('y',-24).attr('width',22).attr('height',28);flagInto(g);return g;})
+    .attr('data-id',d=>d.id);
   const list=Object.entries(pins).map(([id,p])=>Object.assign({id},p));
   if(sel&&sel.t==='new')list.push({id:'__new',s:'new',name:'',lon:sel.lon,lat:sel.lat});
   gPin.selectAll('g.pin').data(list,d=>d.id).join(en=>{const g=en.append('g');g.append('path').attr('d',PIN);g.append('circle').attr('cy',-13.5).attr('r',3);g.append('text').attr('x',10).attr('y',-9);return g;})
@@ -359,6 +366,27 @@ function renderMap(){
   gPin.selectAll('g.pin.sel').raise();
   gLbl.selectAll('text.a').classed('on',d=>D[d.key]==='been');
   scaleDeps();
+}
+function flagInto(g){
+  // 旗杆底部正好落在地点中心的小圆点上
+  const f=g.append('g').attr('class','flg').attr('transform','scale(1.15)');
+  f.append('path').attr('class','fp').attr('d',FLAG_POLE);
+  f.append('path').attr('class','fc').attr('d',FLAG_CLOTH);
+  f.append('circle').attr('class','fb').attr('r',2.4);
+}
+let FLAGS=[];
+const MUNI=['110000','120000','310000','500000','810000','820000'];
+// 中国地图上的小红旗：去过的城市（直辖市、港澳合并成一面旗，台湾按省算）
+function cityFlags(){
+  const out=[];
+  for(const a of Object.keys(NAMES)){
+    if(a.endsWith('0000'))continue;
+    const p=a.slice(0,2)+'0000';
+    if(MUNI.includes(p)||D[a]!=='been'||!CENTERS[a])continue;
+    out.push({id:a,prov:p,lon:CENTERS[a][0],lat:CENTERS[a][1],n:short(NAMES[a])});
+  }
+  for(const p of MUNI.concat(['710000']))if(D[p]==='been'&&CENTERS[p]&&(p==='710000'||Object.keys(NAMES).some(a=>a!==p&&a.startsWith(p.slice(0,2))&&D[a]==='been')||marks[p]))out.push({id:p,prov:p,lon:CENTERS[p][0],lat:CENTERS[p][1],n:short(NAMES[p])});
+  return out;
 }
 function fitT(g){
   const [[x0,y0],[x1,y1]]=path.bounds(g);
@@ -382,7 +410,8 @@ function scrollToMap(){const r=fig.getBoundingClientRect();if(r.top<0||r.bottom>
 svg.on('click',e=>{
   if(!curFeats.length)return;
   lastPt=d3.pointer(e,fig);
-  const t=e.target,pg=t.closest&&t.closest('g.pin'),sg=t.closest&&t.closest('g.spot');
+  const t=e.target,pg=t.closest&&t.closest('g.pin'),sg=t.closest&&t.closest('g.spot'),fg=t.closest&&t.closest('g.flag');
+  if(fg&&fg.__data__){const d=fg.__data__;if(d.id===d.prov)nav('#p-'+d.prov);else goThen('#p-'+d.prov,()=>focusArea(d.id));return;}
   if(pg){const id=pg.getAttribute('data-id');if(id!=='__new')openSel({t:'p',id});return;}
   if(sg){const id=sg.getAttribute('data-id');if((mode==='been'||mode==='want')&&!ro)brushKey(id);else openSel({t:'s',id});return;}
   if(mode==='pin'&&!ro){
@@ -407,7 +436,9 @@ svg.on('pointermove',e=>{
   if(t.classList&&(t.classList.contains('c')||t.classList.contains('dot'))){const f=t.__data__;txt=f.name+(D[f.key]?' · '+SN[D[f.key]]:'')+(f.drill&&mode==='view'?' · 点击进入':'');}
   else{
     const sg=t.closest&&t.closest('g.spot'),pg=t.closest&&t.closest('g.pin');
-    if(sg&&sg.__data__){const s=sg.__data__;txt=s.n+(marks[s.id]?' · '+SN[marks[s.id].s]:'');}
+    const fg=t.closest&&t.closest('g.flag');
+    if(fg&&fg.__data__)txt=fg.__data__.n+' · 去过 · 点击查看';
+    else if(sg&&sg.__data__){const s=sg.__data__;txt=s.n+(marks[s.id]?' · '+SN[marks[s.id].s]:'');}
     else if(pg&&pg.__data__&&pg.__data__.id!=='__new')txt=pg.__data__.name+' · '+SN[pg.__data__.s];
   }
   if(!txt){tip.hidden=true;return;}
@@ -645,7 +676,7 @@ async function route(){
   sel=null;cardEl.hidden=true;tip.hidden=true;
   document.body.classList.remove('v-world','v-china','v-prov');document.body.classList.add('v-'+v);
   gC.selectAll('path').data(curFeats,f=>f.key).join('path').order();
-  gSpot.selectAll('*').remove();gLbl.selectAll('*').remove();gDot.selectAll('*').remove();
+  gSpot.selectAll('*').remove();gFlag.selectAll('*').remove();gLbl.selectAll('*').remove();gDot.selectAll('*').remove();FLAGS=[];
   layout(true);renderAll();setMode(mode==='pin'||mode==='view'||!ro?mode:'view');
   document.title=v==='world'?'我的世界足迹':v==='china'?'中国 · 我的世界足迹':short(NAMES[p])+' · 我的世界足迹';
   if(pendingFocus){const f=pendingFocus;pendingFocus=null;f();}
@@ -788,7 +819,7 @@ async function initStorage(){
   }
   updGhBtn();
   const repo=ghGuess();
-  if(repo){const ab=$('#about');ab.innerHTML=`这是一张旅行足迹地图，红色是去过的地方，蓝色斜纹是想去的地方。网页代码在 <a href="https://github.com/${esc(repo)}">github.com/${esc(repo)}</a>，你也可以复制一份，做自己的足迹地图。`;ab.hidden=false;}
+  if(repo){const ab=$('#about');ab.innerHTML=`这是一张旅行足迹地图，金色和小红旗是去过的地方，蓝色斜纹是想去的地方。网页代码在 <a href="https://github.com/${esc(repo)}">github.com/${esc(repo)}</a>，你也可以复制一份，做自己的足迹地图。`;ab.hidden=false;}
   const cfg=ghReadCfg();
   if(cfg){
     GH.cfg=cfg;backend='github';updGhBtn();

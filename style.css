@@ -7,7 +7,9 @@
 --bg:light-dark(#fbfaf7,#0c1719);--ink:light-dark(#17201e,#eaf0ed);--mut:light-dark(#5b6764,#9aaca8);--line:light-dark(#e3dfd5,#22373a);
 --sea:light-dark(#bfdfd8,#11393f);--grat:light-dark(rgba(255,255,255,.65),rgba(255,255,255,.07));
 --land:light-dark(#f6f2e8,#294542);--landh:light-dark(#ebe3d0,#34544f);--bd:light-dark(#b2a790,#4e716c);
---been:light-dark(#df432a,#ff6a4e);--beenbg:light-dark(#fde4dd,#3d211b);--beenbd:light-dark(#b0321e,#ffa08c);
+--been:light-dark(#df432a,#ff6a4e);--beenbg:light-dark(#fbefc8,#3a3015);--beenbd:light-dark(#d4a93e,#f2cf6b);
+/* 去过：地区涂金色，景点和城市插小红旗 */
+--beenfill:light-dark(#f6d47a,#d8ae45);--beenlbl:light-dark(#5a4000,#2b1f00);--flag:light-dark(#d6281b,#ff4b37);--flagpole:light-dark(#3a2a26,#f3ead8);
 --want:light-dark(#2456c8,#8db0ff);--wantbg:light-dark(#dde6fb,#1f3357);--on:light-dark(#fff,#0c1719);
 --card:light-dark(#fff,#13252a);--chip:light-dark(#efece3,#182c2f);
 --f:"Noto Sans SC",system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;--num:"Archivo",var(--f)}
@@ -78,7 +80,7 @@ h1{font-size:clamp(32px,4.4vw,48px);line-height:1.05;margin:0;font-weight:900;te
 .c{fill:var(--land);stroke:var(--bd);stroke-width:.5;vector-effect:non-scaling-stroke;cursor:pointer;transition:fill .3s}
 .v-china .c,.v-prov .c{stroke-width:.8}
 .c:hover{fill:var(--landh)}
-.c.been{fill:var(--been);stroke:var(--beenbd)}
+.c.been{fill:var(--beenfill);stroke:var(--beenbd)}
 .c.want{fill:url(#hatch);stroke:var(--want)}
 .c.sel{stroke:var(--ink);stroke-width:2}
 .c.drill:hover{fill:var(--landh)}
@@ -96,10 +98,18 @@ svg[data-mode=been] .c,svg[data-mode=want] .c{cursor:cell}
 .spot.want .r{fill:var(--want);stroke:var(--bg)}.spot.want .d{fill:var(--bg)}
 .spot.sel .r{stroke:var(--ink);stroke-width:2.4}
 .spot .hit{fill:transparent}
+.spot .flg{display:none}
+.spot.been .r,.spot.been .d{display:none}
+.spot.been .flg{display:inline}
+.flg .fp{fill:var(--flagpole);stroke:var(--bg);stroke-width:1.2;paint-order:stroke}
+.flg .fc{fill:var(--flag);stroke:var(--bg);stroke-width:2;stroke-linejoin:round;paint-order:stroke}
+.flg .fb{fill:var(--flagpole);stroke:var(--bg);stroke-width:1.5}
+.spot.been.sel .fc{stroke:var(--ink);stroke-width:1.8}
+.flag{cursor:pointer}.flag .hit{fill:transparent}
 .lbl{font:500 12px var(--f);fill:var(--mut);paint-order:stroke;stroke:var(--land);stroke-width:3px;stroke-linejoin:round;pointer-events:none;text-anchor:middle}
 .lbl.s{font-weight:700;fill:var(--ink);stroke:var(--bg);text-anchor:start;font-size:13px}
 .lbl.a{font-size:13px}
-.lbl.on{fill:var(--on);stroke:none;font-weight:700}
+.lbl.on{fill:var(--beenlbl);stroke:none;font-weight:700}
 .lbl.hid{display:none}
 .pin{cursor:pointer}.pin path{fill:var(--been);stroke:var(--bg);stroke-width:1.5}.pin.want path{fill:var(--want)}.pin.new path{fill:var(--ink)}
 .pin circle{fill:var(--bg)}.pin.sel path{stroke:var(--ink);stroke-width:2}
@@ -107,11 +117,12 @@ svg[data-mode=been] .c,svg[data-mode=want] .c{cursor:cell}
 .plbl .pin text,.pin.sel text,.pin:hover text{opacity:1}
 .legend{position:absolute;left:10px;bottom:10px;display:flex;gap:6px 12px;flex-wrap:wrap;padding:5px 10px;border-radius:10px;background:color-mix(in srgb,var(--card) 88%,transparent);font-size:13px;color:var(--mut);pointer-events:none;max-width:calc(100% - 80px)}
 .legend span{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
-.v-world .lg-spot{display:none}
+.v-world .lg-spot,.v-china .lg-spot,.v-world .lg-flag{display:none}
+.sw.flagi{background:none;width:12px;height:15px;border-radius:0}
 .v-china .legend{max-width:calc(100% - 260px)}
 @media(max-width:700px){.v-china .legend{max-width:calc(100% - 170px)}}
 .sw{display:inline-block;width:12px;height:12px;border-radius:3px;flex:none}
-.sw.been{background:var(--been)}.sw.want{background:repeating-linear-gradient(45deg,var(--want) 0 2.5px,var(--wantbg) 2.5px 6px);box-shadow:inset 0 0 0 1px var(--want)}
+.sw.been{background:var(--beenfill);box-shadow:inset 0 0 0 1px var(--beenbd)}.sw.want{background:repeating-linear-gradient(45deg,var(--want) 0 2.5px,var(--wantbg) 2.5px 6px);box-shadow:inset 0 0 0 1px var(--want)}
 .sw.spot{border-radius:50%;background:var(--card);box-shadow:inset 0 0 0 2px var(--ink)}
 .sw.pin{background:none;width:10px;height:14px}
 .zoom{position:absolute;right:10px;bottom:10px;display:grid;gap:6px}
