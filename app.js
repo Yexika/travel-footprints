@@ -809,7 +809,8 @@ function buildIndex(){
     if(a.endsWith('0000'))IDX.push({ty:'省',n,k:a,sub:'中国'});
     else IDX.push({ty:/[区县]$/.test(n)?'区县':'市',n,k:a,sub:short(NAMES[a.slice(0,2)+'0000'])});
   }
-  for(const s of SPOTS)IDX.push({ty:s.g==='5A'?'5A景点':'景点',n:s.n,k:s.id,sub:short(NAMES[s.c]||'')+' · '+short(NAMES[s.p]||'')});
+  // 景点可以带搜索别名 a（如普达措 → 香格里拉），只用于搜索
+  for(const s of SPOTS)IDX.push({ty:s.g==='5A'?'5A景点':'景点',n:s.n,al:Array.isArray(s.a)?s.a.map(a=>String(a).toLowerCase()):null,k:s.id,sub:short(NAMES[s.c]||'')+' · '+short(NAMES[s.p]||'')});
 }
 const q=$('#q'),sug=$('#sug');let hits=[],hi=0;
 function drawSug(){
@@ -820,8 +821,12 @@ function drawSug(){
 q.addEventListener('input',()=>{
   const v=q.value.trim().toLowerCase();
   if(!v||!IDX.length){sug.hidden=true;return;}
-  const sc=x=>x.n===v?0:x.n.startsWith(v)||(x.en&&x.en.startsWith(v))?1:2;
-  hits=IDX.filter(x=>x.n.toLowerCase().includes(v)||(x.en&&x.en.includes(v))).sort((a,b)=>sc(a)-sc(b)||a.n.length-b.n.length).slice(0,10);
+  const inName=x=>x.n.toLowerCase().includes(v)||(x.en&&x.en.includes(v));
+  const viaAl=x=>!inName(x)&&x.al?x.al.find(a=>a.includes(v)):'';
+  const sc=x=>x.n===v?0:x.n.startsWith(v)||(x.en&&x.en.startsWith(v))||(x.al&&x.al.includes(v))?1:2;
+  // 只靠别名搜到的，在副标题前面写上别名，说明为什么出现
+  hits=IDX.filter(x=>inName(x)||viaAl(x)).sort((a,b)=>sc(a)-sc(b)||a.n.length-b.n.length).slice(0,20)
+    .map(x=>{const a=viaAl(x);return a?Object.assign({},x,{sub:a+' · '+x.sub}):x;});
   hi=0;drawSug();
 });
 q.addEventListener('keydown',e=>{
